@@ -1,0 +1,10 @@
+certifi==2024.2.2
+charset-normalizer==3.3.2
+idna==3.6
+PyQt5==5.15.10
+PyQt5-Qt5==5.15.2
+PyQt5-sip==12.13.0
+PyQt5Designer==5.14.1
+python-text-randomizer @ git+https://github.com/ivanenko/python_text_randomizer@858af4a895242b7dd27b2257ef7de85fb1758e70
+requests==2.31.0
+urllib3==2.2.1
