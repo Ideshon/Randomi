@@ -26,7 +26,7 @@ class TextRandomizerGUI(QWidget):
         self.layout = QVBoxLayout()
         self.splitter = QSplitter(Qt.Vertical, self)  # вертикальный разделитель для текстовых полей
 
-        self.delimeterL = QLabel('Delimeter', self) # разделитель подпись
+        # self.delimeterL = QLabel('Delimeter', self) # разделитель подпись
         self.entry = QTextEdit(self)  # Используется для многострочного ввода
         self.delimeter = QLineEdit(';', self)  # Разделитель поле ввода однострочного
         # кнопки
@@ -56,8 +56,8 @@ class TextRandomizerGUI(QWidget):
 
         # Добавить виджеты в сплиттер
         self.splitter.addWidget(self.entry)
-        self.splitter.addWidget(self.template_label)
         self.splitter.addWidget(self.result_output)
+        self.splitter.addWidget(self.template_label)
 
         # Кнопки
         self.randomize_button.clicked.connect(self.randomize_text)
