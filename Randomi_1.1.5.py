@@ -6,7 +6,6 @@ from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTe
 from text_randomizer import TextRandomizer
 from re import sub, split, findall  # стандартная библиотека для работы с текстом
 from PyQt5.QtCore import QSettings, Qt  # для сохранения и загрузки
-import re
 
 class TextRandomizerGUI(QWidget):
     def __init__(self):
@@ -15,18 +14,19 @@ class TextRandomizerGUI(QWidget):
         self.settings = QSettings('Randomi', 'TextRandomizerGUI')  # Инициализация QSettings
         self.loadSettings()  # Загрузка сохраненных настроек при инициализации
 
-        # self.delimeter.setMinimumSize(0, 20)  # Задает минимальный размер 0x20 пикселей
-        # self.delimeter.setMaximumSize(60, 20)  # Задает максимальный размер 60x20 пикселей
-        # self.entry.setMinimumSize(200, 20)
-        # self.template_label.setMinimumSize(200, 20)
-        # self.result_output.setMinimumSize(200, 20)
-        # self.randomize_button.setMaximumSize(10000, 80)
+        self.delimeter.setMinimumSize(0, 20)  # Задает минимальный размер 0x20 пикселей
+        self.delimeter.setMaximumSize(30, 20)  # Задает максимальный размер 30x20 пикселей
+        self.entry.setMinimumSize(200, 20)
+        self.template_label.setMinimumSize(200, 20)
+        self.result_output.setMinimumSize(200, 20)
+        self.randomize_button.setMinimumSize(80, 20)
+        self.save_button.setMinimumSize(50, 20)
+        self.load_button.setMinimumSize(50, 20)
 
     def initUI(self):
         self.layout = QVBoxLayout()
         self.splitter = QSplitter(Qt.Vertical, self)  # вертикальный разделитель для текстовых полей
 
-        # self.delimeterL = QLabel('Delimeter', self) # разделитель подпись
         self.entry = QTextEdit(self)  # Используется для многострочного ввода
         self.delimeter = QLineEdit(';', self)  # Разделитель поле ввода однострочного
         # кнопки
@@ -64,21 +64,6 @@ class TextRandomizerGUI(QWidget):
         self.save_button.clicked.connect(self.saveToFile)
         self.load_button.clicked.connect(self.loadFromFile)
 
-        # # горизонтальный компоновщик для размещения метки и поля ввода разделителя рядом
-        # self.hbox = QHBoxLayout()
-        # self.hbox.addWidget(self.delimeterL)
-        # self.hbox.addWidget(self.delimeter)
-        # self.hbox.addWidget(self.save_button)
-        # self.hbox.addWidget(self.load_button)
-        # self.hbox.addStretch(1)  # Выравнивание по левому
-        #
-        # # вертикальный компоновщик
-        # self.layout.addLayout(self.hbox)
-        # self.layout.addWidget(self.entry)
-        # self.layout.addWidget(self.randomize_button)
-        # self.layout.addWidget(self.result_output)  # Добавлено поле вывода результата
-        # self.layout.addWidget(self.template_label)
-
         # Горизонтальная планировка для кнопок и делиметра
         self.hbox = QHBoxLayout()
         self.hbox.addWidget(QLabel('Delimiter:', self))
@@ -95,6 +80,7 @@ class TextRandomizerGUI(QWidget):
         self.setLayout(self.layout)
         self.setWindowTitle('Randomi')  # название окна
 
+    # Умножение слов
     def expand_text_input(self, input_text):
         import re
         pattern = r'(\w+)\*(\d+)'
@@ -103,7 +89,7 @@ class TextRandomizerGUI(QWidget):
             if not match:
                 break
             word, count = match.groups()
-            expanded = ' | '.join([word] * int(count))
+            expanded = '|'.join([word] * int(count))
             input_text = re.sub(re.escape(match.group(0)), expanded, input_text, count=1)
         return input_text
 
@@ -112,27 +98,18 @@ class TextRandomizerGUI(QWidget):
         norm_template = sub(f"{delim}", "|", template)
         return norm_template
 
+    # рандомизатор
     def randomize_text(self):
         try:
             template = self.entry.toPlainText() # Получение текста из QTextEdit
             expanded_template = self.expand_text_input(template) # Умножение
-            norm_template = self.normalize_template(expanded_template, self.delimeter.text())
+            norm_template = self.normalize_template(expanded_template,self.delimeter.text())
             text_rnd = TextRandomizer(norm_template) # Delimer
             self.result_output.setText(text_rnd.get_text()) # Вывод результата в QTextEdit
         except Exception as e:
             self.result_output.setText(f"Error: {str(e)}") # Вывод ошибки в QTextEdit
 
-    # старая функция
-    # def randomize_text(self):
-    #     try:
-    #         template = self.entry.toPlainText()  # Получение текста из QTextEdit
-    #         norm_template = self.normalize_template(template, self.delimeter.text())
-    #         text_rnd = TextRandomizer(norm_template)
-    #         self.result_output.setText(text_rnd.get_text())  # Вывод результата в QTextEdit
-    #     except Exception as e:
-    #         self.result_output.setText(f"Error: {str(e)}")  # Вывод ошибки в QTextEdit
-
-
+    # сохранение и загрузка в файл
     def saveToFile(self):
         filePath, _ = QFileDialog.getSaveFileName(self, "Save File", "", "Text Files (*.txt)")
         if filePath:
@@ -158,17 +135,18 @@ class TextRandomizerGUI(QWidget):
             except Exception as e:
                 self.result_output.setText(f"Error loading file: {str(e)}")
 
-    def loadSettings(self):  # загрузка
+    # сохранении при закрытии
+    def loadSettings(self):
         self.entry.setPlainText(self.settings.value('entry', ''))
         self.result_output.setPlainText(self.settings.value('result_output', ''))
         self.template_label.setPlainText(self.settings.value('template_label', ''))
 
-    def saveSettings(self):  # сохранение
+    def saveSettings(self):
         self.settings.setValue('template_label', self.template_label.toPlainText())
         self.settings.setValue('entry', self.entry.toPlainText())
         self.settings.setValue('result_output', self.result_output.toPlainText())
 
-    def closeEvent(self, event):  # действие при закрытии
+    def closeEvent(self, event):
         self.saveSettings()
         super().closeEvent(event)
 
