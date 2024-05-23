@@ -229,7 +229,7 @@ class TextRandomizerGUI(QWidget):
         return input_text
 
     def expand_random_count(self, text):
-        # Сначала обработка вложенных функций в "<>"
+        # Сначала обработка вложенных функций в """"
         def process_nested_functions(text):
             nested_pattern = r'"(.*?)"'
             while findall(nested_pattern, text):
@@ -248,34 +248,45 @@ class TextRandomizerGUI(QWidget):
             if not match:
                 break
             for (min_count, max_count, words) in match:
-                words_list = words.split(';')
+                word_list = words.split(';')
+                weighted_word_list = []
+                weights = []
+
+                for word in word_list:
+                    word = word.strip()  # Удаляем пробелы по краям
+                    if '&' in word:
+                        base_word, weight = word.split('&')
+                        weighted_word_list.append(base_word.strip())
+                        weights.append(int(weight))
+                    else:
+                        weighted_word_list.append(word)
+                        weights.append(1)
+
                 min_count, max_count = int(min_count), int(max_count)
 
-                # Добавим отладочные сообщения
-                print(f"Debug - formula: %{min_count}-{max_count}({words})")
-                print(f"Debug - words_list: {words_list}")
+                # Корректировка значений min_count и max_count
+                max_count = min(max_count, len(weighted_word_list))
+                min_count = min(min_count, max_count)
 
-                # Проверка и корректировка значений min_count и max_count
-                if min_count > len(words_list):
-                    min_count = len(words_list)
-                if max_count > len(words_list):
-                    max_count = len(words_list)
-
-                if min_count > max_count:
-                    min_count = max_count
-
-                # Обработка пустых списков слов
-                if not words_list:
+                if max_count == 0:
                     selected_words = ''
                 else:
-                    num_words = random.randint(min_count, max_count)
-                    selected_words = ','.join(random.sample(words_list, num_words))
+                    num_words = random.randint(min_count, max_count)  # Случайное количество слов в диапазоне
+                    selected_words = set()
+                    while len(selected_words) < num_words:  # Пока не наберем нужное количество слов
+                        selected_words.update(
+                            random.choices(weighted_word_list, weights))  # Добавляем слова в соответствии с весами
+                    selected_words = ','.join(selected_words)
 
                 formula = f'%{min_count}-{max_count}({words})'
                 text = text.replace(formula, selected_words, 1)
 
-                # Еще одно отладочное сообщение
+                # Отладочные сообщения
+                print(f"Debug - formula: {formula}")
                 print(f"Debug - selected_words: {selected_words}")
+                print(f"Debug - weighted_word_list: {weighted_word_list}")
+                print(f"Debug - weights: {weights}")
+
         return text
 
     """
