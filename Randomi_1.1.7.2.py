@@ -1,11 +1,16 @@
 import sys
 import re
 import random
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel, QLineEdit, \
-    QSplitter, QFileDialog, QSlider, QDialog
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel, QLineEdit,
+    QSplitter, QFileDialog, QSlider, QDialog, QMessageBox, QCheckBox
+)
 from PyQt5.QtCore import QSettings, Qt
-from PyQt5.QtGui import QTextCharFormat, QFont
+from PyQt5.QtGui import QTextCharFormat, QFont, QTextCursor, QTextDocument
 from text_randomizer import TextRandomizer
+import json
+
+
 
 class TextRandomizerGUI(QWidget):
     def __init__(self):
@@ -13,6 +18,7 @@ class TextRandomizerGUI(QWidget):
         self.initUI()
         self.settings = QSettings('Randomi', 'TextRandomizerGUI')
         self.loadSettings()
+        self.last_focused_text_edit = None  # Добавлено для хранения последнего активного текстового поля
 
         # Ограничения размеров виджетов
         self.delimiter.setMinimumSize(0, 20)
@@ -51,12 +57,22 @@ class TextRandomizerGUI(QWidget):
 
         # Поля ввода и вывода
         self.entry = QTextEdit(self)
+        self.entry.setFocusPolicy(Qt.StrongFocus)
         self.delimiter = QLineEdit(';', self)
-        self.func_delimiter = QLineEdit(',', self)  # Добавлено поле для разделителя функций
+        self.delimiter.setFocusPolicy(Qt.StrongFocus)
+        self.func_delimiter = QLineEdit(',', self)
+        self.func_delimiter.setFocusPolicy(Qt.StrongFocus)
         self.result_output = QTextEdit(self)
         self.result_output.setReadOnly(False)
+        self.result_output.setFocusPolicy(Qt.StrongFocus)
         self.template_label = QTextEdit('', self)
         self.template_label.setReadOnly(False)
+        self.template_label.setFocusPolicy(Qt.StrongFocus)
+
+        # Переопределение событий фокуса
+        self.entry.focusInEvent = self.make_focus_in_event(self.entry)
+        self.template_label.focusInEvent = self.make_focus_in_event(self.template_label)
+        self.result_output.focusInEvent = self.make_focus_in_event(self.result_output)
 
         # Кнопки
         self.randomize_button = QPushButton('Randomize', self)
@@ -64,6 +80,7 @@ class TextRandomizerGUI(QWidget):
         self.load_button = QPushButton('Load', self)
         self.bold_button = QPushButton('Bold', self)
         self.reset_button = QPushButton('Reset Formatting', self)
+        self.find_replace_button = QPushButton('Find & Replace', self)
 
         # Функции кнопок
         self.randomize_button.clicked.connect(self.randomize_text)
@@ -71,6 +88,7 @@ class TextRandomizerGUI(QWidget):
         self.load_button.clicked.connect(self.loadFromFile)
         self.bold_button.clicked.connect(self.toggleBold)
         self.reset_button.clicked.connect(self.resetFormatting)
+        self.find_replace_button.clicked.connect(self.open_find_replace_dialog)
 
         # Добавление виджетов в сплиттер
         self.splitter.addWidget(self.entry)
@@ -91,6 +109,7 @@ class TextRandomizerGUI(QWidget):
         self.hbox2 = QHBoxLayout()
         self.hbox2.addWidget(self.bold_button)
         self.hbox2.addWidget(self.reset_button)
+        self.hbox2.addWidget(self.find_replace_button)
 
         # Добавление макетов в основной макет
         self.layout.addWidget(self.splitter)
@@ -99,6 +118,12 @@ class TextRandomizerGUI(QWidget):
 
         self.setLayout(self.layout)
         self.setWindowTitle('Randomi')
+
+    def make_focus_in_event(self, widget):
+        def focus_in_event(event):
+            self.last_focused_text_edit = widget
+            QTextEdit.focusInEvent(widget, event)
+        return focus_in_event
 
     def applyFormattingToSelectedText(self, text_edit):
         cursor = text_edit.textCursor()
@@ -139,7 +164,11 @@ class TextRandomizerGUI(QWidget):
                 template = re.sub(rf'\s*{escaped_delim}\s*', '|', template)
 
             # Замена умножения слов на функцию $MULTIPLY(word, count)
-            template = re.sub(r'(\w+)\*(\d+)', lambda m: '{$' + f'MULTIPLY({m.group(1)},{m.group(2)})' + '}', template)
+            template = re.sub(
+                r'(\w+)\*(\d+)',
+                lambda m: '{$' + f'MULTIPLY({m.group(1)},{m.group(2)})' + '}',
+                template
+            )
 
             # Замена %min-max(words) на функцию $RANDWORDS(min, max, words)
             def replace_randwords(match):
@@ -147,6 +176,7 @@ class TextRandomizerGUI(QWidget):
                 max_count = match.group(2)
                 words = match.group(3)
                 return '{$RANDWORDS(' + f'{min_count}{func_delimiter}{max_count}{func_delimiter}{words}' + ')}'
+
             template = re.sub(r'%(\d+)-(\d+)\((.*?)\)', replace_randwords, template)
 
             # Предварительная обработка для разворачивания вложенных функций
@@ -258,31 +288,32 @@ class TextRandomizerGUI(QWidget):
             self.result_output.setPlainText(f"Error: {str(e)}")
 
     def saveToFile(self):
-        filePath, _ = QFileDialog.getSaveFileName(self, "Save File", "", "Rich Text Files (*.html);;All Files (*)")
+        filePath, _ = QFileDialog.getSaveFileName(self, "Save File", "", "JSON Files (*.json);;All Files (*)")
         if filePath:
             try:
+                data = {
+                    'entry': self.entry.toHtml(),
+                    'result_output': self.result_output.toHtml(),
+                    'template_label': self.template_label.toHtml(),
+                    'delimiter': self.delimiter.text(),
+                    'func_delimiter': self.func_delimiter.text()
+                }
                 with open(filePath, 'w', encoding='utf-8') as file:
-                    file.write(self.entry.toHtml() + '\n---END---\n')
-                    file.write(self.result_output.toHtml() + '\n---END---\n')
-                    file.write(self.template_label.toHtml() + '\n---END---\n')
-                    file.write(self.delimiter.text() + '\n---END---\n')
-                    file.write(self.func_delimiter.text() + '\n---END---\n')
+                    json.dump(data, file, ensure_ascii=False, indent=4)
             except Exception as e:
                 self.result_output.setHtml(f"<p>Error saving file: {str(e)}</p>")
 
     def loadFromFile(self):
-        filePath, _ = QFileDialog.getOpenFileName(self, "Open File", "", "Rich Text Files (*.html);;All Files (*)")
+        filePath, _ = QFileDialog.getOpenFileName(self, "Open File", "", "JSON Files (*.json);;All Files (*)")
         if filePath:
             try:
                 with open(filePath, 'r', encoding='utf-8') as file:
-                    content = file.read()
-                parts = content.split('---END---\n')
-                if len(parts) >= 5:
-                    self.entry.setHtml(parts[0].strip())
-                    self.result_output.setHtml(parts[1].strip())
-                    self.template_label.setHtml(parts[2].strip())
-                    self.delimiter.setText(parts[3].strip())
-                    self.func_delimiter.setText(parts[4].strip())
+                    data = json.load(file)
+                self.entry.setHtml(data.get('entry', ''))
+                self.result_output.setHtml(data.get('result_output', ''))
+                self.template_label.setHtml(data.get('template_label', ''))
+                self.delimiter.setText(data.get('delimiter', ';'))
+                self.func_delimiter.setText(data.get('func_delimiter', ','))
             except Exception as e:
                 self.result_output.setHtml(f"<p>Error loading file: {str(e)}</p>")
 
@@ -314,6 +345,147 @@ class TextRandomizerGUI(QWidget):
     def closeEvent(self, event):
         self.saveSettings()
         super().closeEvent(event)
+
+    def open_find_replace_dialog(self):
+        self.find_replace_dialog = FindReplaceDialog(self)
+        self.find_replace_dialog.show()
+
+    def get_current_text_edit(self):
+        # Возвращаем последнее активное текстовое поле
+        return self.last_focused_text_edit
+
+class FindReplaceDialog(QDialog):
+    def __init__(self, parent=None):
+        super(FindReplaceDialog, self).__init__(parent)
+        self.parent = parent
+        self.initUI()
+
+    def initUI(self):
+        self.setWindowTitle('Find & Replace')
+
+        # Поля ввода для поиска и замены
+        self.find_label = QLabel('Find:', self)
+        self.find_input = QLineEdit(self)
+
+        self.replace_label = QLabel('Replace:', self)
+        self.replace_input = QLineEdit(self)
+
+        # Флажок для учета регистра
+        self.case_sensitive_checkbox = QCheckBox('Case Sensitive', self)
+
+        # Кнопки
+        self.find_next_button = QPushButton('Find Next', self)
+        self.replace_button = QPushButton('Replace', self)
+        self.replace_all_button = QPushButton('Replace All', self)
+        self.close_button = QPushButton('Close', self)
+
+        # Подключение сигналов к слотам
+        self.find_next_button.clicked.connect(self.find_next)
+        self.replace_button.clicked.connect(self.replace)
+        self.replace_all_button.clicked.connect(self.replace_all)
+        self.close_button.clicked.connect(self.close)
+
+        # Макеты
+        layout = QVBoxLayout()
+        form_layout = QHBoxLayout()
+        form_layout.addWidget(self.find_label)
+        form_layout.addWidget(self.find_input)
+        layout.addLayout(form_layout)
+
+        form_layout2 = QHBoxLayout()
+        form_layout2.addWidget(self.replace_label)
+        form_layout2.addWidget(self.replace_input)
+        layout.addLayout(form_layout2)
+
+        layout.addWidget(self.case_sensitive_checkbox)
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.find_next_button)
+        button_layout.addWidget(self.replace_button)
+        button_layout.addWidget(self.replace_all_button)
+        button_layout.addWidget(self.close_button)
+
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+
+    def find_next(self):
+        text_to_find = self.find_input.text()
+        if not text_to_find:
+            return
+
+        # Получаем текущее текстовое поле из родительского окна
+        text_edit = self.parent.get_current_text_edit()
+        if not text_edit:
+            QMessageBox.warning(self, 'No Text Field Selected', 'Please select a text field to search.')
+            return
+
+        # Установка опций поиска
+        options = QTextDocument.FindFlags()
+        if self.case_sensitive_checkbox.isChecked():
+            options |= QTextDocument.FindCaseSensitively
+
+        # Поиск текста
+        found = text_edit.find(text_to_find, options)
+        if not found:
+            # Если не найдено, начать с начала документа
+            cursor = text_edit.textCursor()
+            cursor.movePosition(QTextCursor.Start)
+            text_edit.setTextCursor(cursor)
+            found = text_edit.find(text_to_find, options)
+            if not found:
+                QMessageBox.information(self, 'Not Found', 'Text not found.')
+
+    def replace(self):
+        text_to_find = self.find_input.text()
+        replace_with = self.replace_input.text()
+        if not text_to_find:
+            return
+
+        text_edit = self.parent.get_current_text_edit()
+        if not text_edit:
+            QMessageBox.warning(self, 'No Text Field Selected', 'Please select a text field to replace.')
+            return
+
+        cursor = text_edit.textCursor()
+        if cursor.hasSelection() and cursor.selectedText() == text_to_find:
+            cursor.insertText(replace_with)
+            text_edit.setTextCursor(cursor)
+            self.find_next()
+        else:
+            self.find_next()
+
+    def replace_all(self):
+        text_to_find = self.find_input.text()
+        replace_with = self.replace_input.text()
+        if not text_to_find:
+            return
+
+        text_edit = self.parent.get_current_text_edit()
+        if not text_edit:
+            QMessageBox.warning(self, 'No Text Field Selected', 'Please select a text field to replace.')
+            return
+
+        # Установка опций поиска
+        options = QTextDocument.FindFlags()
+        if self.case_sensitive_checkbox.isChecked():
+            options |= QTextDocument.FindCaseSensitively
+
+        cursor = text_edit.textCursor()
+        cursor.beginEditBlock()
+
+        # Перемещаем курсор в начало
+        cursor.movePosition(QTextCursor.Start)
+        text_edit.setTextCursor(cursor)
+
+        replaced = 0
+        while text_edit.find(text_to_find, options):
+            cursor = text_edit.textCursor()
+            cursor.insertText(replace_with)
+            replaced += 1
+
+        cursor.endEditBlock()
+        QMessageBox.information(self, 'Replace All', f'Replaced {replaced} occurrences.')
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
