@@ -2,7 +2,7 @@ import sys
 import re
 import random
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel, QLineEdit, \
-    QSplitter, QFileDialog, QSlider
+    QSplitter, QFileDialog, QSlider, QDialog
 from PyQt5.QtCore import QSettings, Qt
 from PyQt5.QtGui import QTextCharFormat, QFont
 from text_randomizer import TextRandomizer
@@ -17,6 +17,8 @@ class TextRandomizerGUI(QWidget):
         # Ограничения размеров виджетов
         self.delimiter.setMinimumSize(0, 20)
         self.delimiter.setMaximumSize(30, 20)
+        self.func_delimiter.setMinimumSize(0, 20)
+        self.func_delimiter.setMaximumSize(30, 20)
         self.entry.setMinimumSize(200, 20)
         self.template_label.setMinimumSize(200, 20)
         self.result_output.setMinimumSize(200, 20)
@@ -50,6 +52,7 @@ class TextRandomizerGUI(QWidget):
         # Поля ввода и вывода
         self.entry = QTextEdit(self)
         self.delimiter = QLineEdit(';', self)
+        self.func_delimiter = QLineEdit(',', self)  # Добавлено поле для разделителя функций
         self.result_output = QTextEdit(self)
         self.result_output.setReadOnly(False)
         self.template_label = QTextEdit('', self)
@@ -74,10 +77,12 @@ class TextRandomizerGUI(QWidget):
         self.splitter.addWidget(self.result_output)
         self.splitter.addWidget(self.template_label)
 
-        # Горизонтальный макет для кнопок и разделителя
+        # Горизонтальный макет для кнопок и разделителей
         self.hbox = QHBoxLayout()
         self.hbox.addWidget(QLabel('Delimiter:', self))
         self.hbox.addWidget(self.delimiter)
+        self.hbox.addWidget(QLabel('Function Delimiter:', self))
+        self.hbox.addWidget(self.func_delimiter)
         self.hbox.addWidget(self.randomize_button)
         self.hbox.addWidget(self.save_button)
         self.hbox.addWidget(self.load_button)
@@ -126,6 +131,7 @@ class TextRandomizerGUI(QWidget):
         try:
             template = self.entry.toPlainText()
             delimiter = self.delimiter.text()
+            func_delimiter = self.func_delimiter.text()
 
             # Замена пользовательского разделителя на '|'
             if delimiter and delimiter != '|':
@@ -140,11 +146,11 @@ class TextRandomizerGUI(QWidget):
                 min_count = match.group(1)
                 max_count = match.group(2)
                 words = match.group(3)
-                return '{$RANDWORDS(' + f'{min_count},{max_count},{words}' + ')}'
+                return '{$RANDWORDS(' + f'{min_count}{func_delimiter}{max_count}{func_delimiter}{words}' + ')}'
             template = re.sub(r'%(\d+)-(\d+)\((.*?)\)', replace_randwords, template)
 
             # Предварительная обработка для разворачивания вложенных функций
-            def evaluate_functions(s):
+            def evaluate_functions(s, delimiter=func_delimiter):
                 def parse_function(s, start):
                     func_name = ''
                     i = start
@@ -158,9 +164,15 @@ class TextRandomizerGUI(QWidget):
                     arg = ''
                     depth = 1
                     while i < len(s) and depth > 0:
-                        if s[i] == '(':
+                        # Проверяем на разделитель функций
+                        if depth == 1 and s[i:i+len(delimiter)] == delimiter:
+                            args.append(arg.strip())
+                            arg = ''
+                            i += len(delimiter)
+                        elif s[i] == '(':
                             depth += 1
                             arg += s[i]
+                            i += 1
                         elif s[i] == ')':
                             depth -= 1
                             if depth == 0:
@@ -169,12 +181,10 @@ class TextRandomizerGUI(QWidget):
                                 break
                             else:
                                 arg += s[i]
-                        elif s[i] == ',' and depth == 1:
-                            args.append(arg.strip())
-                            arg = ''
+                                i += 1
                         else:
                             arg += s[i]
-                        i += 1
+                            i += 1
                     else:
                         if depth > 0:
                             raise ValueError("Unmatched parenthesis in function call")
@@ -199,9 +209,10 @@ class TextRandomizerGUI(QWidget):
                                 continue
                             else:
                                 result += s[i]
+                                i += 1
                         else:
                             result += s[i]
-                        i += 1
+                            i += 1
                     return result
 
                 return evaluate(s)
@@ -216,6 +227,8 @@ class TextRandomizerGUI(QWidget):
                 words = [w.strip() for w in words]
                 max_count = min(max_count, len(words))
                 min_count = min(min_count, max_count)
+                if max_count <= 0:
+                    return ''
                 num_words = random.randint(min_count, max_count)
                 selected_words = random.sample(words, num_words)
                 return ' '.join(selected_words)
@@ -228,12 +241,21 @@ class TextRandomizerGUI(QWidget):
 
             randomized_text = text_rnd.get_text()
 
-            # Очистка результата от лишних пробелов
-            cleaned_text = re.sub(r'\s+', ' ', randomized_text).strip()
+            # Очистка результата, сохраняя двойные переводы строк как абзацы
+            # 1. Заменяем последовательности из трех и более новых строк на двойные новые строки
+            text = re.sub(r'\n{3,}', '\n\n', randomized_text)
+            # 2. Заменяем двойные новые строки на уникальный маркер
+            text = text.replace('\n\n', '<<<PARAGRAPH_BREAK>>>')
+            # 3. Заменяем оставшиеся пробельные символы и одинарные новые строки на пробел
+            text = re.sub(r'[ \t\r\f\v]+', ' ', text)
+            text = re.sub(r'\n', ' ', text)
+            text = text.strip()
+            # 4. Восстанавливаем маркеры в двойные новые строки
+            cleaned_text = text.replace('<<<PARAGRAPH_BREAK>>>', '\n\n')
 
-            self.result_output.setText(cleaned_text)
+            self.result_output.setPlainText(cleaned_text)
         except Exception as e:
-            self.result_output.setText(f"Error: {str(e)}")
+            self.result_output.setPlainText(f"Error: {str(e)}")
 
     def saveToFile(self):
         filePath, _ = QFileDialog.getSaveFileName(self, "Save File", "", "Rich Text Files (*.html);;All Files (*)")
@@ -243,6 +265,8 @@ class TextRandomizerGUI(QWidget):
                     file.write(self.entry.toHtml() + '\n---END---\n')
                     file.write(self.result_output.toHtml() + '\n---END---\n')
                     file.write(self.template_label.toHtml() + '\n---END---\n')
+                    file.write(self.delimiter.text() + '\n---END---\n')
+                    file.write(self.func_delimiter.text() + '\n---END---\n')
             except Exception as e:
                 self.result_output.setHtml(f"<p>Error saving file: {str(e)}</p>")
 
@@ -253,22 +277,21 @@ class TextRandomizerGUI(QWidget):
                 with open(filePath, 'r', encoding='utf-8') as file:
                     content = file.read()
                 parts = content.split('---END---\n')
-                if len(parts) >= 3:
+                if len(parts) >= 5:
                     self.entry.setHtml(parts[0].strip())
                     self.result_output.setHtml(parts[1].strip())
                     self.template_label.setHtml(parts[2].strip())
+                    self.delimiter.setText(parts[3].strip())
+                    self.func_delimiter.setText(parts[4].strip())
             except Exception as e:
                 self.result_output.setHtml(f"<p>Error loading file: {str(e)}</p>")
-
-    def saveSettings(self):
-        self.settings.setValue('template_label', self.template_label.toHtml())
-        self.settings.setValue('entry', self.entry.toHtml())
-        self.settings.setValue('result_output', self.result_output.toHtml())
 
     def loadSettings(self):
         entry_html = self.settings.value('entry', '')
         result_html = self.settings.value('result_output', '')
         template_html = self.settings.value('template_label', '')
+        delimiter = self.settings.value('delimiter', ';')
+        func_delimiter = self.settings.value('func_delimiter', ',')
 
         if entry_html:
             self.entry.setHtml(entry_html)
@@ -276,6 +299,17 @@ class TextRandomizerGUI(QWidget):
             self.result_output.setHtml(result_html)
         if template_html:
             self.template_label.setHtml(template_html)
+        if delimiter:
+            self.delimiter.setText(delimiter)
+        if func_delimiter:
+            self.func_delimiter.setText(func_delimiter)
+
+    def saveSettings(self):
+        self.settings.setValue('template_label', self.template_label.toHtml())
+        self.settings.setValue('entry', self.entry.toHtml())
+        self.settings.setValue('result_output', self.result_output.toHtml())
+        self.settings.setValue('delimiter', self.delimiter.text())
+        self.settings.setValue('func_delimiter', self.func_delimiter.text())
 
     def closeEvent(self, event):
         self.saveSettings()
