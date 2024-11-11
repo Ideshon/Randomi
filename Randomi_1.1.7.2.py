@@ -1,6 +1,7 @@
 import sys
 import re
 import random
+import json
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel, QLineEdit,
     QSplitter, QFileDialog, QSlider, QDialog, QMessageBox, QCheckBox
@@ -8,8 +9,6 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import QSettings, Qt
 from PyQt5.QtGui import QTextCharFormat, QFont, QTextCursor, QTextDocument
 from text_randomizer import TextRandomizer
-import json
-
 
 
 class TextRandomizerGUI(QWidget):
@@ -18,7 +17,7 @@ class TextRandomizerGUI(QWidget):
         self.initUI()
         self.settings = QSettings('Randomi', 'TextRandomizerGUI')
         self.loadSettings()
-        self.last_focused_text_edit = None  # Добавлено для хранения последнего активного текстового поля
+        self.last_focused_text_edit = None  # Для хранения последнего активного текстового поля
 
         # Ограничения размеров виджетов
         self.delimiter.setMinimumSize(0, 20)
@@ -135,157 +134,158 @@ class TextRandomizerGUI(QWidget):
         cursor.setCharFormat(char_format)
 
     def toggleBold(self):
-        for text_edit in [self.entry, self.template_label, self.result_output]:
-            try:
-                self.applyFormattingToSelectedText(text_edit)
-            except Exception as e:
-                print(f"Error in {text_edit.objectName()}: {str(e)}")
+        text_edit = self.get_current_text_edit()
+        if text_edit:
+            self.applyFormattingToSelectedText(text_edit)
 
     def resetFormatting(self):
-        for text_edit in [self.entry, self.template_label, self.result_output]:
-            try:
-                cursor = text_edit.textCursor()
-                cursor.select(cursor.Document)
-                cursor.setCharFormat(QTextCharFormat())
-                cursor.clearSelection()
-                text_edit.setTextCursor(cursor)
-            except Exception as e:
-                print(f"Error resetting formatting for {text_edit.objectName()}: {str(e)}")
+        text_edit = self.get_current_text_edit()
+        if text_edit:
+            cursor = text_edit.textCursor()
+            cursor.select(cursor.Document)
+            cursor.setCharFormat(QTextCharFormat())
+            cursor.clearSelection()
+            text_edit.setTextCursor(cursor)
 
     def randomize_text(self):
         try:
-            template = self.entry.toPlainText()
+            # Получаем HTML из поля ввода
+            template = self.entry.toHtml()
             delimiter = self.delimiter.text()
             func_delimiter = self.func_delimiter.text()
 
-            # Замена пользовательского разделителя на '|'
-            if delimiter and delimiter != '|':
-                escaped_delim = re.escape(delimiter)
-                template = re.sub(rf'\s*{escaped_delim}\s*', '|', template)
+            # Разделяем HTML на теги и текстовые части
+            parts = re.split('(<[^>]+>)', template)
+            new_parts = []
+            for part in parts:
+                if part.startswith('<'):
+                    # Это тег, оставляем без изменений
+                    new_parts.append(part)
+                else:
+                    # Это текстовая часть, обрабатываем её
+                    # Замена пользовательского разделителя на '|'
+                    if delimiter and delimiter != '|':
+                        escaped_delim = re.escape(delimiter)
+                        part = re.sub(rf'\s*{escaped_delim}\s*', '|', part)
 
-            # Замена умножения слов на функцию $MULTIPLY(word, count)
-            template = re.sub(
-                r'(\w+)\*(\d+)',
-                lambda m: '{$' + f'MULTIPLY({m.group(1)},{m.group(2)})' + '}',
-                template
-            )
+                    # Замена умножения слов на функцию $MULTIPLY(word, count)
+                    part = re.sub(
+                        r'(\w+)\*(\d+)',
+                        lambda m: '{$' + f'MULTIPLY({m.group(1)},{m.group(2)})' + '}',
+                        part
+                    )
 
-            # Замена %min-max(words) на функцию $RANDWORDS(min, max, words)
-            def replace_randwords(match):
-                min_count = match.group(1)
-                max_count = match.group(2)
-                words = match.group(3)
-                return '{$RANDWORDS(' + f'{min_count}{func_delimiter}{max_count}{func_delimiter}{words}' + ')}'
+                    # Замена %min-max(words) на функцию $RANDWORDS(min, max, words)
+                    def replace_randwords(match):
+                        min_count = match.group(1)
+                        max_count = match.group(2)
+                        words = match.group(3)
+                        return '{$RANDWORDS(' + f'{min_count}{func_delimiter}{max_count}{func_delimiter}{words}' + ')}'
 
-            template = re.sub(r'%(\d+)-(\d+)\((.*?)\)', replace_randwords, template)
+                    part = re.sub(r'%(\d+)-(\d+)\((.*?)\)', replace_randwords, part)
 
-            # Предварительная обработка для разворачивания вложенных функций
-            def evaluate_functions(s, delimiter=func_delimiter):
-                def parse_function(s, start):
-                    func_name = ''
-                    i = start
-                    while i < len(s) and (s[i].isalnum() or s[i] == '_'):
-                        func_name += s[i]
-                        i += 1
-                    if i >= len(s) or s[i] != '(':
-                        return None, start
-                    i += 1  # Пропускаем '('
-                    args = []
-                    arg = ''
-                    depth = 1
-                    while i < len(s) and depth > 0:
-                        # Проверяем на разделитель функций
-                        if depth == 1 and s[i:i+len(delimiter)] == delimiter:
-                            args.append(arg.strip())
-                            arg = ''
-                            i += len(delimiter)
-                        elif s[i] == '(':
-                            depth += 1
-                            arg += s[i]
-                            i += 1
-                        elif s[i] == ')':
-                            depth -= 1
-                            if depth == 0:
-                                args.append(arg.strip())
-                                i += 1  # Пропускаем ')'
-                                break
-                            else:
-                                arg += s[i]
-                                i += 1
-                        else:
-                            arg += s[i]
-                            i += 1
-                    else:
-                        if depth > 0:
-                            raise ValueError("Unmatched parenthesis in function call")
-                    return {'name': func_name, 'args': args}, i
+                    # Выполняем предварительную обработку функций
+                    part = self.evaluate_functions_in_text(part, func_delimiter)
 
-                def evaluate(s):
-                    result = ''
-                    i = 0
-                    while i < len(s):
-                        if s[i] == '$':
-                            func_info, new_i = parse_function(s, i + 1)
-                            if func_info:
-                                evaluated_args = [evaluate(arg) for arg in func_info['args']]
-                                if func_info['name'] == 'MULTIPLY':
-                                    res = multiply(*evaluated_args)
-                                elif func_info['name'] == 'RANDWORDS':
-                                    res = randwords(*evaluated_args)
-                                else:
-                                    res = ''
-                                result += res
-                                i = new_i
-                                continue
-                            else:
-                                result += s[i]
-                                i += 1
-                        else:
-                            result += s[i]
-                            i += 1
-                    return result
+                    new_parts.append(part)
 
-                return evaluate(s)
-
-            # Определяем функции MULTIPLY и RANDWORDS для предварительной обработки
-            def multiply(word, count):
-                return ' '.join([word.strip()] * int(count))
-
-            def randwords(min_count, max_count, *words):
-                min_count = int(min_count)
-                max_count = int(max_count)
-                words = [w.strip() for w in words]
-                max_count = min(max_count, len(words))
-                min_count = min(min_count, max_count)
-                if max_count <= 0:
-                    return ''
-                num_words = random.randint(min_count, max_count)
-                selected_words = random.sample(words, num_words)
-                return ' '.join(selected_words)
-
-            # Выполняем предварительную обработку шаблона
-            template = evaluate_functions(template)
+            # Собираем HTML-контент обратно
+            randomized_html = ''.join(new_parts)
 
             # Создание объекта TextRandomizer
-            text_rnd = TextRandomizer(template)
+            text_rnd = TextRandomizer(randomized_html)
 
-            randomized_text = text_rnd.get_text()
+            # Получаем рандомизированный текст с HTML
+            final_html = text_rnd.get_text()
 
-            # Очистка результата, сохраняя двойные переводы строк как абзацы
-            # 1. Заменяем последовательности из трех и более новых строк на двойные новые строки
-            text = re.sub(r'\n{3,}', '\n\n', randomized_text)
-            # 2. Заменяем двойные новые строки на уникальный маркер
-            text = text.replace('\n\n', '<<<PARAGRAPH_BREAK>>>')
-            # 3. Заменяем оставшиеся пробельные символы и одинарные новые строки на пробел
-            text = re.sub(r'[ \t\r\f\v]+', ' ', text)
-            text = re.sub(r'\n', ' ', text)
-            text = text.strip()
-            # 4. Восстанавливаем маркеры в двойные новые строки
-            cleaned_text = text.replace('<<<PARAGRAPH_BREAK>>>', '\n\n')
+            # Устанавливаем результат в поле вывода
+            self.result_output.setHtml(final_html)
 
-            self.result_output.setPlainText(cleaned_text)
         except Exception as e:
-            self.result_output.setPlainText(f"Error: {str(e)}")
+            self.result_output.setHtml(f"<p>Error: {str(e)}</p>")
+
+    def evaluate_functions_in_text(self, text, func_delimiter):
+        # Предварительная обработка для разворачивания вложенных функций
+        def parse_function(s, start):
+            func_name = ''
+            i = start
+            while i < len(s) and (s[i].isalnum() or s[i] == '_'):
+                func_name += s[i]
+                i += 1
+            if i >= len(s) or s[i] != '(':
+                return None, start
+            i += 1  # Пропускаем '('
+            args = []
+            arg = ''
+            depth = 1
+            while i < len(s) and depth > 0:
+                # Проверяем на разделитель функций
+                if depth == 1 and s[i:i+len(func_delimiter)] == func_delimiter:
+                    args.append(arg)
+                    arg = ''
+                    i += len(func_delimiter)
+                elif s[i] == '(':
+                    depth += 1
+                    arg += s[i]
+                    i += 1
+                elif s[i] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        args.append(arg)
+                        i += 1  # Пропускаем ')'
+                        break
+                    else:
+                        arg += s[i]
+                        i += 1
+                else:
+                    arg += s[i]
+                    i += 1
+            else:
+                if depth > 0:
+                    raise ValueError("Unmatched parenthesis in function call")
+            return {'name': func_name, 'args': args}, i
+
+        def evaluate(s):
+            result = ''
+            i = 0
+            while i < len(s):
+                if s[i] == '$':
+                    func_info, new_i = parse_function(s, i + 1)
+                    if func_info:
+                        evaluated_args = [evaluate(arg) for arg in func_info['args']]
+                        if func_info['name'] == 'MULTIPLY':
+                            res = self.multiply(*evaluated_args)
+                        elif func_info['name'] == 'RANDWORDS':
+                            res = self.randwords(*evaluated_args)
+                        else:
+                            res = ''
+                        result += res
+                        i = new_i
+                        continue
+                    else:
+                        result += s[i]
+                        i += 1
+                else:
+                    result += s[i]
+                    i += 1
+            return result
+
+        return evaluate(text)
+
+    def multiply(self, word, count):
+        return ' '.join([word] * int(count))
+
+    def randwords(self, min_count, max_count, *words):
+        min_count = int(min_count)
+        max_count = int(max_count)
+        words = [w.strip() for w in words]
+        max_count = min(max_count, len(words))
+        min_count = min(min_count, max_count)
+        if max_count <= 0:
+            return ''
+        num_words = random.randint(min_count, max_count)
+        selected_words = random.sample(words, num_words)
+        return ' '.join(selected_words)
 
     def saveToFile(self):
         filePath, _ = QFileDialog.getSaveFileName(self, "Save File", "", "JSON Files (*.json);;All Files (*)")
@@ -353,6 +353,7 @@ class TextRandomizerGUI(QWidget):
     def get_current_text_edit(self):
         # Возвращаем последнее активное текстовое поле
         return self.last_focused_text_edit
+
 
 class FindReplaceDialog(QDialog):
     def __init__(self, parent=None):
