@@ -145,68 +145,66 @@ class TextRandomizerGUI(QWidget):
 
             # Предварительная обработка для разворачивания вложенных функций
             def evaluate_functions(s):
-                pattern = r'\$([A-Z_][A-Z0-9_]*)\('
-                while True:
-                    match = re.search(pattern, s)
-                    if not match:
-                        break
-                    func_name = match.group(1)
-                    start_index = match.end()  # Позиция сразу после '('
-                    # Находим соответствующую закрывающую скобку
+                def parse_function(s, start):
+                    func_name = ''
+                    i = start
+                    while i < len(s) and (s[i].isalnum() or s[i] == '_'):
+                        func_name += s[i]
+                        i += 1
+                    if i >= len(s) or s[i] != '(':
+                        return None, start
+                    i += 1  # Пропускаем '('
+                    args = []
+                    arg = ''
                     depth = 1
-                    i = start_index
-                    while i < len(s):
+                    while i < len(s) and depth > 0:
                         if s[i] == '(':
                             depth += 1
+                            arg += s[i]
                         elif s[i] == ')':
                             depth -= 1
                             if depth == 0:
+                                args.append(arg.strip())
+                                i += 1  # Пропускаем ')'
                                 break
+                            else:
+                                arg += s[i]
+                        elif s[i] == ',' and depth == 1:
+                            args.append(arg.strip())
+                            arg = ''
+                        else:
+                            arg += s[i]
                         i += 1
-                    if depth != 0:
-                        raise ValueError("Unmatched parenthesis in function call")
-                    args_str = s[start_index:i]  # Извлекаем аргументы функции
-                    # Разбиваем аргументы, учитывая вложенные функции и скобки
-                    args = split_args(args_str)
-
-                    # Рекурсивно оцениваем каждый аргумент
-                    evaluated_args = []
-                    for arg in args:
-                        evaluated_arg = evaluate_functions(arg)
-                        evaluated_args.append(evaluated_arg)
-
-                    # Выполняем функцию с оцененными аргументами
-                    if func_name == 'MULTIPLY':
-                        result = multiply(*evaluated_args)
-                    elif func_name == 'RANDWORDS':
-                        result = randwords(*evaluated_args)
                     else:
-                        result = ''
-                    # Заменяем вызов функции на результат
-                    s = s[:match.start()] + result + s[i + 1:]  # Пропускаем закрывающую скобку ')'
-                return s
+                        if depth > 0:
+                            raise ValueError("Unmatched parenthesis in function call")
+                    return {'name': func_name, 'args': args}, i
 
-            # Разбиваем аргументы функции, учитывая вложенные скобки
-            def split_args(args_str):
-                args = []
-                current_arg = ''
-                depth = 0
-                i = 0
-                while i < len(args_str):
-                    c = args_str[i]
-                    if c == ',' and depth == 0:
-                        args.append(current_arg.strip())
-                        current_arg = ''
-                    else:
-                        if c == '(':
-                            depth += 1
-                        elif c == ')':
-                            depth -= 1
-                        current_arg += c
-                    i += 1
-                if current_arg:
-                    args.append(current_arg.strip())
-                return args
+                def evaluate(s):
+                    result = ''
+                    i = 0
+                    while i < len(s):
+                        if s[i] == '$':
+                            func_info, new_i = parse_function(s, i + 1)
+                            if func_info:
+                                evaluated_args = [evaluate(arg) for arg in func_info['args']]
+                                if func_info['name'] == 'MULTIPLY':
+                                    res = multiply(*evaluated_args)
+                                elif func_info['name'] == 'RANDWORDS':
+                                    res = randwords(*evaluated_args)
+                                else:
+                                    res = ''
+                                result += res
+                                i = new_i
+                                continue
+                            else:
+                                result += s[i]
+                        else:
+                            result += s[i]
+                        i += 1
+                    return result
+
+                return evaluate(s)
 
             # Определяем функции MULTIPLY и RANDWORDS для предварительной обработки
             def multiply(word, count):
@@ -238,39 +236,46 @@ class TextRandomizerGUI(QWidget):
             self.result_output.setText(f"Error: {str(e)}")
 
     def saveToFile(self):
-        filePath, _ = QFileDialog.getSaveFileName(self, "Save File", "", "Text Files (*.txt)")
+        filePath, _ = QFileDialog.getSaveFileName(self, "Save File", "", "Rich Text Files (*.html);;All Files (*)")
         if filePath:
             try:
                 with open(filePath, 'w', encoding='utf-8') as file:
-                    file.write(self.entry.toPlainText() + '\n---END---\n')
-                    file.write(self.result_output.toPlainText() + '\n---END---\n')
-                    file.write(self.template_label.toPlainText() + '\n---END---\n')
+                    file.write(self.entry.toHtml() + '\n---END---\n')
+                    file.write(self.result_output.toHtml() + '\n---END---\n')
+                    file.write(self.template_label.toHtml() + '\n---END---\n')
             except Exception as e:
-                self.result_output.setText(f"Error saving file: {str(e)}")
+                self.result_output.setHtml(f"<p>Error saving file: {str(e)}</p>")
 
     def loadFromFile(self):
-        filePath, _ = QFileDialog.getOpenFileName(self, "Open File", "", "Text Files (*.txt)")
+        filePath, _ = QFileDialog.getOpenFileName(self, "Open File", "", "Rich Text Files (*.html);;All Files (*)")
         if filePath:
             try:
                 with open(filePath, 'r', encoding='utf-8') as file:
                     content = file.read()
                 parts = content.split('---END---\n')
                 if len(parts) >= 3:
-                    self.entry.setPlainText(parts[0].strip())
-                    self.result_output.setPlainText(parts[1].strip())
-                    self.template_label.setPlainText(parts[2].strip())
+                    self.entry.setHtml(parts[0].strip())
+                    self.result_output.setHtml(parts[1].strip())
+                    self.template_label.setHtml(parts[2].strip())
             except Exception as e:
-                self.result_output.setText(f"Error loading file: {str(e)}")
-
-    def loadSettings(self):
-        self.entry.setPlainText(self.settings.value('entry', ''))
-        self.result_output.setPlainText(self.settings.value('result_output', ''))
-        self.template_label.setPlainText(self.settings.value('template_label', ''))
+                self.result_output.setHtml(f"<p>Error loading file: {str(e)}</p>")
 
     def saveSettings(self):
-        self.settings.setValue('template_label', self.template_label.toPlainText())
-        self.settings.setValue('entry', self.entry.toPlainText())
-        self.settings.setValue('result_output', self.result_output.toPlainText())
+        self.settings.setValue('template_label', self.template_label.toHtml())
+        self.settings.setValue('entry', self.entry.toHtml())
+        self.settings.setValue('result_output', self.result_output.toHtml())
+
+    def loadSettings(self):
+        entry_html = self.settings.value('entry', '')
+        result_html = self.settings.value('result_output', '')
+        template_html = self.settings.value('template_label', '')
+
+        if entry_html:
+            self.entry.setHtml(entry_html)
+        if result_html:
+            self.result_output.setHtml(result_html)
+        if template_html:
+            self.template_label.setHtml(template_html)
 
     def closeEvent(self, event):
         self.saveSettings()
