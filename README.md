@@ -13,6 +13,8 @@ This function will repeat the word the required number of times.
 Delimeter changes the "|" to the specified character.
 Function delimiter changes "," to the specified character.
 
+Try not to use service symbols.
+
 The Synonyms command - {variant1 | variant2 | variant3} - inserts one of the variants into the resulting string. If you want to skip the text, use the "empty" option - {|variant} Mixin command = [ text 1 | text 2 | text 3] - will randomly mix these options.
 
 You can use the separator in mixin - [+,+text 1|text2 ] - you will get text2,text1. The separator can be any character or set of characters: [+==+ a|b] - a==b or b==a If you want to get a special character in your result ({, }, [, ], |, +) - use a backslash for it - {, }, [, ], |, +
@@ -46,6 +48,8 @@ $MULTIPLY(word, count)
 
 Delimeter меняет "|" на указанный символ.
 Function delimeter меняет "," на указанный символ.
+
+Старайтесь не использовать служебные символы.
 
 Команда "Синонимы" - {variant1 | variant2 | variant3} - вставляет один из вариантов в результирующую строку. Если вы хотите пропустить текст - используйте вариант "пусто" - {|variant} Команда Mixin = [ текст 1 | текст 2 | текст 3] - будет случайным образом миксовать эти варианты.
 
