@@ -117,85 +117,7 @@ class TextRandomizerGUI(QWidget):
 
         self.setLayout(self.layout)
         self.setWindowTitle('Randomi')
-        
-def make_focus_in_event(self, widget):
-    def focus_in_event(event):
-        self.last_focused_text_edit = widget
-        QTextEdit.focusInEvent(widget, event)
 
-    return focus_in_event
-
-
-def applyFormattingToSelectedText(self, text_edit):
-    cursor = text_edit.textCursor()
-    if not cursor.hasSelection():
-        return
-    char_format = cursor.charFormat()
-    is_bold = char_format.font().bold()
-    char_format.setFontWeight(QFont.Bold if not is_bold else QFont.Normal)
-    cursor.setCharFormat(char_format)
-
-
-def toggleBold(self):
-    text_edit = self.get_current_text_edit()
-    if text_edit:
-        self.applyFormattingToSelectedText(text_edit)
-
-
-def resetFormatting(self):
-    text_edit = self.get_current_text_edit()
-    if text_edit:
-        cursor = text_edit.textCursor()
-        cursor.select(cursor.Document)
-        cursor.setCharFormat(QTextCharFormat())
-        cursor.clearSelection()
-        text_edit.setTextCursor(cursor)
-
-
-def randomize_text(self):
-    try:
-        template = self.entry.toHtml()
-        delimiter = self.delimiter.text()
-        func_delimiter = self.func_delimiter.text()
-
-        parts = re.split('(<[^>]+>)', template)
-        new_parts = []
-        for part in parts:
-            if part.startswith('<'):
-                new_parts.append(part)
-            else:
-                if delimiter and delimiter != '|':
-                    escaped_delim = re.escape(delimiter)
-                    part = re.sub(rf'\s*{escaped_delim}\s*', '|', part)
-
-                part = re.sub(
-                    r'(\w+)\*(\d+)',
-                    lambda m: '{$' + f'MULTIPLY({m.group(1)},{m.group(2)})' + '}',
-                    part
-                )
-
-                def replace_randwords(match):
-                    min_count = match.group(1)
-                    max_count = match.group(2)
-                    words = match.group(3)
-                    return '{$RANDWORDS(' + f'{min_count}{func_delimiter}{max_count}{func_delimiter}{words}' + ')}'
-
-                part = re.sub(r'%(\d+)-(\d+)\((.*?)\)', replace_randwords, part)
-
-                part = self.evaluate_functions_in_text(part, func_delimiter)
-
-                new_parts.append(part)
-
-        randomized_html = ''.join(new_parts)
-
-        text_rnd = TextRandomizer(randomized_html)
-
-        final_html = text_rnd.get_text()
-
-        self.result_output.setHtml(final_html)
-
-    except Exception as e:
-        self.result_output.setHtml(f"<p>Error: {str(e)}</p>")
     def make_focus_in_event(self, widget):
         def focus_in_event(event):
             self.last_focused_text_edit = widget
@@ -227,48 +149,141 @@ def randomize_text(self):
 
     def randomize_text(self):
         try:
-            template = self.entry.toHtml()
+            # Получаем текст из текстового поля
+            template = self.entry.toPlainText()
             delimiter = self.delimiter.text()
             func_delimiter = self.func_delimiter.text()
 
-            parts = re.split('(<[^>]+>)', template)
-            new_parts = []
-            for part in parts:
-                if part.startswith('<'):
-                    new_parts.append(part)
-                else:
-                    if delimiter and delimiter != '|':
-                        escaped_delim = re.escape(delimiter)
-                        part = re.sub(rf'\s*{escaped_delim}\s*', '|', part)
+            # Заменяем пользовательский разделитель на стандартный '|'
+            if delimiter and delimiter != '|':
+                escaped_delim = re.escape(delimiter)
+                template = re.sub(rf'\s*{escaped_delim}\s*', '|', template)
 
-                    part = re.sub(
-                        r'(\w+)\*(\d+)',
-                        lambda m: '{$' + f'MULTIPLY({m.group(1)},{m.group(2)})' + '}',
-                        part
-                    )
+            # Создаем экземпляр TextRandomizer (предполагается, что он работает)
+            text_rnd = TextRandomizer(template)
 
-                    def replace_randwords(match):
-                        min_count = match.group(1)
-                        max_count = match.group(2)
-                        words = match.group(3)
-                        return '{$RANDWORDS(' + f'{min_count}{func_delimiter}{max_count}{func_delimiter}{words}' + ')}'
+            # Обработка функций
+            def evaluate_functions(template):
+                def replace_function(match):
+                    func_name = match.group(1)
+                    args = match.group(2).split(func_delimiter)
 
-                    part = re.sub(r'%(\d+)-(\d+)\((.*?)\)', replace_randwords, part)
+                    if func_name == 'MULTIPLY':
+                        return self.multiply(*args)
+                    elif func_name == 'RANDWORDS':
+                        return self.randwords(*args)
+                    else:
+                        return match.group(0)  # Возврат оригинальной строки, если функция не поддерживается
 
-                    part = self.evaluate_functions_in_text(part, func_delimiter)
+                return re.sub(r'\$([A-Z_]+)\((.*?)\)', replace_function, template)
 
-                    new_parts.append(part)
+            # Обработка текста
+            randomized_text = evaluate_functions(template)
 
-            randomized_html = ''.join(new_parts)
-
-            text_rnd = TextRandomizer(randomized_html)
-
-            final_html = text_rnd.get_text()
-
-            self.result_output.setHtml(final_html)
+            # Устанавливаем результат в поле вывода
+            self.result_output.setPlainText(randomized_text)
 
         except Exception as e:
-            self.result_output.setHtml(f"<p>Error: {str(e)}</p>")
+            self.result_output.setPlainText(f"Error: {str(e)}")
+
+    def get_text(self):
+        if self.tree:
+            result = []
+            for indexes in self.tree.get_indexes():
+                if indexes:
+                    if type(indexes) == list:
+                        result.append(self.template[indexes[0]: indexes[1]])
+                    else:
+                        result.append(indexes)
+                else:
+                    result.append(" ")
+
+            return ''.join(result)
+        else:
+            raise Exception('Template not parsed yet')
+
+    def evaluate_functions_in_text(self, text, func_delimiter):
+        def parse_function(s, start):
+            func_name = ''
+            i = start
+            while i < len(s) and (s[i].isalnum() or s[i] == '_'):
+                func_name += s[i]
+                i += 1
+            if i >= len(s) or s[i] != '(':
+                return None, start
+            i += 1  # Пропускаем '('
+            args = []
+            arg = ''
+            depth = 1
+            while i < len(s) and depth > 0:
+                if depth == 1 and s[i:i + len(func_delimiter)] == func_delimiter:
+                    args.append(arg)
+                    arg = ''
+                    i += len(func_delimiter)
+                elif s[i] == '(':
+                    depth += 1
+                    arg += s[i]
+                    i += 1
+                elif s[i] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        args.append(arg)
+                        i += 1  # Пропускаем ')'
+                        break
+                    else:
+                        arg += s[i]
+                        i += 1
+                else:
+                    arg += s[i]
+                    i += 1
+            else:
+                if depth > 0:
+                    raise ValueError("Unmatched parenthesis in function call")
+            return {'name': func_name, 'args': args}, i
+
+        def evaluate(s):
+            result = ''
+            i = 0
+            while i < len(s):
+                if s[i] == '$':
+                    func_info, new_i = parse_function(s, i + 1)
+                    if func_info:
+                        # Сначала обрабатываем аргументы рекурсивно
+                        evaluated_args = [evaluate(arg) for arg in func_info['args']]
+                        if func_info['name'] == 'MULTIPLY':
+                            res = self.multiply(*evaluated_args)
+                        elif func_info['name'] == 'RANDWORDS':
+                            res = self.randwords(*evaluated_args)
+                        else:
+                            res = ''
+                        result += res
+                        i = new_i
+                        continue
+                    else:
+                        result += s[i]
+                        i += 1
+                else:
+                    result += s[i]
+                    i += 1
+            return result
+
+        return evaluate(text)
+
+    def multiply(self, word, count):
+        return ' '.join([word] * int(count))
+
+    def randwords(self, min_count, max_count, *words):
+        min_count = int(min_count)
+        max_count = int(max_count)
+        words = [w.strip() for w in words]
+        max_count = min(max_count, len(words))
+        min_count = min(min_count, max_count)
+        if max_count <= 0:
+            return ''
+        num_words = random.randint(min_count, max_count)
+        selected_words = random.sample(words, num_words)
+        return ' '.join(selected_words)
+
     def saveToFile(self):
         filePath, _ = QFileDialog.getSaveFileName(self, "Save File", "", "JSON Files (*.json);;All Files (*)")
         if filePath:
@@ -333,7 +348,9 @@ def randomize_text(self):
         self.find_replace_dialog.show()
 
     def get_current_text_edit(self):
+        # Возвращаем последнее активное текстовое поле
         return self.last_focused_text_edit
+
 
 class FindReplaceDialog(QDialog):
     def __init__(self, parent=None):
@@ -344,24 +361,29 @@ class FindReplaceDialog(QDialog):
     def initUI(self):
         self.setWindowTitle('Find & Replace')
 
+        # Поля ввода для поиска и замены
         self.find_label = QLabel('Find:', self)
         self.find_input = QLineEdit(self)
 
         self.replace_label = QLabel('Replace:', self)
         self.replace_input = QLineEdit(self)
 
+        # Флажок для учета регистра
         self.case_sensitive_checkbox = QCheckBox('Case Sensitive', self)
 
+        # Кнопки
         self.find_next_button = QPushButton('Find Next', self)
         self.replace_button = QPushButton('Replace', self)
         self.replace_all_button = QPushButton('Replace All', self)
         self.close_button = QPushButton('Close', self)
 
+        # Подключение сигналов к слотам
         self.find_next_button.clicked.connect(self.find_next)
         self.replace_button.clicked.connect(self.replace)
         self.replace_all_button.clicked.connect(self.replace_all)
         self.close_button.clicked.connect(self.close)
 
+        # Макеты
         layout = QVBoxLayout()
         form_layout = QHBoxLayout()
         form_layout.addWidget(self.find_label)
@@ -389,17 +411,21 @@ class FindReplaceDialog(QDialog):
         if not text_to_find:
             return
 
+        # Получаем текущее текстовое поле из родительского окна
         text_edit = self.parent.get_current_text_edit()
         if not text_edit:
             QMessageBox.warning(self, 'No Text Field Selected', 'Please select a text field to search.')
             return
 
+        # Установка опций поиска
         options = QTextDocument.FindFlags()
         if self.case_sensitive_checkbox.isChecked():
             options |= QTextDocument.FindCaseSensitively
 
+        # Поиск текста
         found = text_edit.find(text_to_find, options)
         if not found:
+            # Если не найдено, начать с начала документа
             cursor = text_edit.textCursor()
             cursor.movePosition(QTextCursor.Start)
             text_edit.setTextCursor(cursor)
@@ -437,6 +463,7 @@ class FindReplaceDialog(QDialog):
             QMessageBox.warning(self, 'No Text Field Selected', 'Please select a text field to replace.')
             return
 
+        # Установка опций поиска
         options = QTextDocument.FindFlags()
         if self.case_sensitive_checkbox.isChecked():
             options |= QTextDocument.FindCaseSensitively
@@ -444,6 +471,7 @@ class FindReplaceDialog(QDialog):
         cursor = text_edit.textCursor()
         cursor.beginEditBlock()
 
+        # Перемещаем курсор в начало
         cursor.movePosition(QTextCursor.Start)
         text_edit.setTextCursor(cursor)
 
@@ -455,6 +483,7 @@ class FindReplaceDialog(QDialog):
 
         cursor.endEditBlock()
         QMessageBox.information(self, 'Replace All', f'Replaced {replaced} occurrences.')
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

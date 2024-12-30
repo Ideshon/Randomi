@@ -1,6 +1,6 @@
 import sys
 from PyQt5.QtWidgets import QApplication
-from text_randomizer_gui import TextRandomizerGUI
+from gui import TextRandomizerGUI
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
