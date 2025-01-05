@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTe
     QSplitter, QFileDialog, QSlider
 from PyQt5.QtCore import QSettings, Qt
 from PyQt5.QtGui import QTextCharFormat, QFont
-from text_randomizer import TextRandomizer
+from randomizer import TextRandomizer
 
 class TextRandomizerGUI(QWidget):
     def __init__(self):

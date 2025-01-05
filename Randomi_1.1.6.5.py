@@ -7,7 +7,7 @@
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel, QLineEdit, \
     QSplitter, QFileDialog, QSlider
 import random
-from text_randomizer import TextRandomizer
+from randomizer import TextRandomizer
 from re import sub, split, findall  # стандартная библиотека для работы с текстом
 from PyQt5.QtCore import QSettings, Qt  # для сохранения и загрузки
 from PyQt5.QtGui import QTextCharFormat, QFont, QPalette, QColor, QTextOption

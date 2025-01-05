@@ -3,7 +3,7 @@
 # QTextEdit и QLineEdit - редактор текста, QV и QHBoxLayout - расположение виджетов, QLabel - отображение текста,
 # QSplitter - изменение размера виджетов
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel, QLineEdit, QSplitter, QFileDialog
-from text_randomizer import TextRandomizer
+from randomizer import TextRandomizer
 from re import sub, split, findall  # стандартная библиотека для работы с текстом
 from PyQt5.QtCore import QSettings, Qt  # для сохранения и загрузки
 

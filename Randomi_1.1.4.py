@@ -2,7 +2,7 @@
 # QApplication - основные настройки, QWidget - отображение содержимого, QFileDialog - для диалога сохранения, QTextEdit и QLineEdit - редактор текста, QV и QHBoxLayout - расположение виджетов, QLabel - отображение текста, QSplitter - изменение размера виджетов
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTextEdit, QPushButton, QLabel, QLineEdit, QHBoxLayout, \
     QSplitter, QFileDialog
-from text_randomizer import TextRandomizer
+from randomizer import TextRandomizer
 from re import sub, split, findall  # стандартная библиотека для работы с текстом
 from PyQt5.QtCore import QSettings  # для сохранения и загрузки
 
