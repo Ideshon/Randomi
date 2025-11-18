@@ -1,4 +1,6 @@
 import sys
+import os
+import logging
 import re
 import random
 import json
@@ -7,16 +9,37 @@ from PyQt5.QtWidgets import (
     QSplitter, QFileDialog, QSlider, QDialog, QMessageBox, QCheckBox
 )
 from PyQt5.QtCore import QSettings, Qt
+
 from PyQt5.QtGui import QTextCharFormat, QFont, QTextCursor, QTextDocument
 from text_randomizer import TextRandomizer
+
+# =========================
+# НАСТРОЙКА ЛОГИРОВАНИЯ
+# =========================
+# Лог-файлы будут лежать в папке "logs" рядом со скриптом.
+LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.DEBUG,  # при желании DEBUG заменить на INFO, чтобы убрать подробный шум
+    format='[%(asctime)s] %(levelname)s %(name)s: %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),  # вывод в консоль (работает, если собирать exe без --windowed)
+        logging.FileHandler(os.path.join(LOG_DIR, "randomi.log"), encoding="utf-8"),  # лог в файл
+    ]
+)
+
+log = logging.getLogger(__name__)
+log.info("Модуль Randomi загружен, логирование инициализировано")
 
 
 class TextRandomizerGUI(QWidget):
     def __init__(self):
+        log.info("Инициализация GUI TextRandomizerGUI")
         super().__init__()
         self.initUI()
         self.settings = QSettings('Randomi', 'TextRandomizerGUI')
-        self.loadSettings()
+
         self.last_focused_text_edit = None  # Для хранения последнего активного текстового поля
 
         # Ограничения размеров виджетов
@@ -43,7 +66,13 @@ class TextRandomizerGUI(QWidget):
         self.layout.addWidget(self.font_size_label)
         self.layout.addWidget(self.font_size_slider)
 
+        # Подгружаем настройки после того, как всё создано
+        self.loadSettings()
+        log.info("GUI инициализирован, настройки загружены")
+
     def changeFontSize(self, value):
+        """Изменение размера шрифта во всех основных полях."""
+        log.info("Изменение размера шрифта: %s", value)
         font = self.entry.font()
         font.setPointSize(value)
         self.entry.setFont(font)
@@ -51,6 +80,7 @@ class TextRandomizerGUI(QWidget):
         self.template_label.setFont(font)
 
     def initUI(self):
+        log.debug("Создание элементов UI")
         self.layout = QVBoxLayout()
         self.splitter = QSplitter(Qt.Vertical, self)
 
@@ -69,9 +99,9 @@ class TextRandomizerGUI(QWidget):
         self.template_label.setFocusPolicy(Qt.StrongFocus)
 
         # Переопределение событий фокуса
-        self.entry.focusInEvent = self.make_focus_in_event(self.entry)
-        self.template_label.focusInEvent = self.make_focus_in_event(self.template_label)
-        self.result_output.focusInEvent = self.make_focus_in_event(self.result_output)
+        self.entry.focusInEvent = self.make_focus_in_event(self.entry, "entry")
+        self.template_label.focusInEvent = self.make_focus_in_event(self.template_label, "template_label")
+        self.result_output.focusInEvent = self.make_focus_in_event(self.result_output, "result_output")
 
         # Кнопки
         self.randomize_button = QPushButton('Randomize', self)
@@ -117,56 +147,77 @@ class TextRandomizerGUI(QWidget):
 
         self.setLayout(self.layout)
         self.setWindowTitle('Randomi')
+        log.debug("UI создан")
 
-    def make_focus_in_event(self, widget):
+    def make_focus_in_event(self, widget, name: str):
+        """Обёртка для событий фокуса, чтобы помнить последнее активное поле и логировать переключения."""
+
         def focus_in_event(event):
             self.last_focused_text_edit = widget
+            log.info("Фокус перешёл в поле: %s", name)
             QTextEdit.focusInEvent(widget, event)
+
         return focus_in_event
 
     def applyFormattingToSelectedText(self, text_edit):
+        """Переключение жирности у выделенного текста."""
         cursor = text_edit.textCursor()
         if not cursor.hasSelection():
+            log.debug("Попытка применить форматирование без выделения текста")
             return
         char_format = cursor.charFormat()
         is_bold = char_format.font().bold()
         char_format.setFontWeight(QFont.Bold if not is_bold else QFont.Normal)
         cursor.setCharFormat(char_format)
+        log.info("Форматирование жирности переключено (текущее состояние: %s)", "bold" if not is_bold else "normal")
 
     def toggleBold(self):
         text_edit = self.get_current_text_edit()
         if text_edit:
+            log.info("Нажата кнопка Bold для текущего поля")
             self.applyFormattingToSelectedText(text_edit)
+        else:
+            log.info("Нажатие Bold без активного текстового поля")
 
     def resetFormatting(self):
         text_edit = self.get_current_text_edit()
         if text_edit:
+            log.info("Сброс форматирования для текущего поля")
             cursor = text_edit.textCursor()
             cursor.select(cursor.Document)
             cursor.setCharFormat(QTextCharFormat())
             cursor.clearSelection()
             text_edit.setTextCursor(cursor)
+        else:
+            log.info("Попытка сбросить форматирование без активного текстового поля")
 
     def randomize_text(self):
+        """Основной метод: парсинг HTML, подготовка шаблонов и запуск TextRandomizer."""
+        log.info("Запуск рандомизации текста")
         try:
             # Получаем HTML из поля ввода
             template = self.entry.toHtml()
             delimiter = self.delimiter.text()
             func_delimiter = self.func_delimiter.text()
+            log.debug("Получен HTML из поля ввода, delimiter=%r, func_delimiter=%r", delimiter, func_delimiter)
 
             # Разделяем HTML на теги и текстовые части
-            parts = re.split('(<[^>]+>)', template)
+            log.debug("Разделение HTML на теги и текстовые части")
+            parts = re.split(r'(<[^>]+>)', template)
             new_parts = []
+
             for part in parts:
                 if part.startswith('<'):
                     # Это тег, оставляем без изменений
                     new_parts.append(part)
                 else:
                     # Это текстовая часть, обрабатываем её
+
                     # Замена пользовательского разделителя на '|'
                     if delimiter and delimiter != '|':
                         escaped_delim = re.escape(delimiter)
                         part = re.sub(rf'\s*{escaped_delim}\s*', '|', part)
+                        log.debug("Замена пользовательского разделителя %r на '|'", delimiter)
 
                     # Замена умножения слов на функцию $MULTIPLY(word, count)
                     part = re.sub(
@@ -180,6 +231,8 @@ class TextRandomizerGUI(QWidget):
                         min_count = match.group(1)
                         max_count = match.group(2)
                         words = match.group(3)
+                        log.debug("Обнаружен шаблон RANDWORDS: min=%s, max=%s, words=%s",
+                                  min_count, max_count, words)
                         return '{$RANDWORDS(' + f'{min_count}{func_delimiter}{max_count}{func_delimiter}{words}' + ')}'
 
                     part = re.sub(r'%(\d+)-(\d+)\((.*?)\)', replace_randwords, part)
@@ -191,22 +244,33 @@ class TextRandomizerGUI(QWidget):
 
             # Собираем HTML-контент обратно
             randomized_html = ''.join(new_parts)
+            log.debug("HTML после предварительной обработки функций собран")
 
             # Создание объекта TextRandomizer
             text_rnd = TextRandomizer(randomized_html)
+            log.debug("Создан TextRandomizer")
 
             # Получаем рандомизированный текст с HTML
             final_html = text_rnd.get_text()
+            log.info("Получен рандомизированный HTML")
 
             # Устанавливаем результат в поле вывода
             self.result_output.setHtml(final_html)
+            log.info("Результат установлен в поле вывода")
 
         except Exception as e:
+            # Ловим любые ошибки и логируем стек
             self.result_output.setHtml(f"<p>Error: {str(e)}</p>")
+            log.error("Ошибка в randomize_text: %s", e, exc_info=True)
 
     def evaluate_functions_in_text(self, text, func_delimiter):
-        # Предварительная обработка для разворачивания вложенных функций
+        """
+        Предварительная обработка для разворачивания вложенных функций типа $MULTIPLY(...) и $RANDWORDS(...).
+        """
+        log.debug("Старт evaluate_functions_in_text, func_delimiter=%r", func_delimiter)
+
         def parse_function(s, start):
+            """Парсим имя функции и её аргументы, учитывая вложенные скобки."""
             func_name = ''
             i = start
             while i < len(s) and (s[i].isalnum() or s[i] == '_'):
@@ -215,12 +279,14 @@ class TextRandomizerGUI(QWidget):
             if i >= len(s) or s[i] != '(':
                 return None, start
             i += 1  # Пропускаем '('
+            log.debug("Найден вызов функции %r", func_name)
             args = []
             arg = ''
             depth = 1
             while i < len(s) and depth > 0:
                 # Проверяем на разделитель функций
-                if depth == 1 and s[i:i+len(func_delimiter)] == func_delimiter:
+
+                if depth == 1 and s[i:i + len(func_delimiter)] == func_delimiter:
                     args.append(arg)
                     arg = ''
                     i += len(func_delimiter)
@@ -233,6 +299,7 @@ class TextRandomizerGUI(QWidget):
                     if depth == 0:
                         args.append(arg)
                         i += 1  # Пропускаем ')'
+                        log.debug("Закрывающая скобка функции %r, аргументы=%r", func_name, args)
                         break
                     else:
                         arg += s[i]
@@ -242,54 +309,80 @@ class TextRandomizerGUI(QWidget):
                     i += 1
             else:
                 if depth > 0:
+                    log.error("Несовпадающая скобка при вызове функции %r", func_name)
                     raise ValueError("Unmatched parenthesis in function call")
+
             return {'name': func_name, 'args': args}, i
 
         def evaluate(s):
+            """Рекурсивная подстановка результатов функций в строку."""
+            log.debug("Запуск evaluate для строки длиной %d", len(s))
             result = ''
             i = 0
             while i < len(s):
                 if s[i] == '$':
+
                     func_info, new_i = parse_function(s, i + 1)
                     if func_info:
+                        log.debug("Найдена функция %s с аргументами %r",
+                                  func_info['name'], func_info['args'])
                         evaluated_args = [evaluate(arg) for arg in func_info['args']]
                         if func_info['name'] == 'MULTIPLY':
                             res = self.multiply(*evaluated_args)
+                            log.debug("Результат MULTIPLY: %r", res)
                         elif func_info['name'] == 'RANDWORDS':
                             res = self.randwords(*evaluated_args)
+                            log.debug("Результат RANDWORDS: %r", res)
                         else:
                             res = ''
+                            log.warning("Неизвестная функция: %s", func_info['name'])
                         result += res
                         i = new_i
                         continue
                     else:
                         result += s[i]
                         i += 1
+
                 else:
                     result += s[i]
                     i += 1
+            log.debug("Завершение evaluate, результат длиной %d", len(result))
             return result
 
-        return evaluate(text)
+        processed = evaluate(text)
+        log.debug("evaluate_functions_in_text завершён")
+        return processed
 
     def multiply(self, word, count):
+        """Реализация функции MULTIPLY(word, count)."""
+        log.debug("Сработала функция MULTIPLY: word=%r, count=%r", word, count)
         return ' '.join([word] * int(count))
 
     def randwords(self, min_count, max_count, *words):
+        """Реализация функции RANDWORDS(min, max, words...)."""
+        log.debug("Сработала функция RANDWORDS: min=%r, max=%r, words=%r",
+                  min_count, max_count, words)
         min_count = int(min_count)
         max_count = int(max_count)
         words = [w.strip() for w in words]
         max_count = min(max_count, len(words))
         min_count = min(min_count, max_count)
         if max_count <= 0:
+            log.debug("RANDWORDS: max_count <= 0, возвращаем пустую строку")
             return ''
         num_words = random.randint(min_count, max_count)
         selected_words = random.sample(words, num_words)
-        return ' '.join(selected_words)
+        res = ' '.join(selected_words)
+        log.debug("RANDWORDS выбрал %d слов: %r", num_words, res)
+        return res
 
     def saveToFile(self):
-        filePath, _ = QFileDialog.getSaveFileName(self, "Save File", "", "JSON Files (*.json);;All Files (*)")
+        """Сохранение текущего состояния в JSON-файл."""
+        filePath, _ = QFileDialog.getSaveFileName(
+            self, "Save File", "", "JSON Files (*.json);;All Files (*)"
+        )
         if filePath:
+            log.info("Сохранение в файл: %s", filePath)
             try:
                 data = {
                     'entry': self.entry.toHtml(),
@@ -301,11 +394,16 @@ class TextRandomizerGUI(QWidget):
                 with open(filePath, 'w', encoding='utf-8') as file:
                     json.dump(data, file, ensure_ascii=False, indent=4)
             except Exception as e:
+                log.error("Ошибка при сохранении файла: %s", e, exc_info=True)
                 self.result_output.setHtml(f"<p>Error saving file: {str(e)}</p>")
 
     def loadFromFile(self):
-        filePath, _ = QFileDialog.getOpenFileName(self, "Open File", "", "JSON Files (*.json);;All Files (*)")
+        """Загрузка состояния из JSON-файла."""
+        filePath, _ = QFileDialog.getOpenFileName(
+            self, "Open File", "", "JSON Files (*.json);;All Files (*)"
+        )
         if filePath:
+            log.info("Загрузка из файла: %s", filePath)
             try:
                 with open(filePath, 'r', encoding='utf-8') as file:
                     data = json.load(file)
@@ -315,9 +413,12 @@ class TextRandomizerGUI(QWidget):
                 self.delimiter.setText(data.get('delimiter', ';'))
                 self.func_delimiter.setText(data.get('func_delimiter', ','))
             except Exception as e:
+                log.error("Ошибка при загрузке файла: %s", e, exc_info=True)
                 self.result_output.setHtml(f"<p>Error loading file: {str(e)}</p>")
 
     def loadSettings(self):
+        """Загрузка настроек из QSettings."""
+        log.debug("Загрузка настроек из QSettings")
         entry_html = self.settings.value('entry', '')
         result_html = self.settings.value('result_output', '')
         template_html = self.settings.value('template_label', '')
@@ -334,8 +435,11 @@ class TextRandomizerGUI(QWidget):
             self.delimiter.setText(delimiter)
         if func_delimiter:
             self.func_delimiter.setText(func_delimiter)
+        log.info("Настройки загружены")
 
     def saveSettings(self):
+        """Сохранение настроек в QSettings."""
+        log.info("Сохранение настроек в QSettings")
         self.settings.setValue('template_label', self.template_label.toHtml())
         self.settings.setValue('entry', self.entry.toHtml())
         self.settings.setValue('result_output', self.result_output.toHtml())
@@ -343,15 +447,19 @@ class TextRandomizerGUI(QWidget):
         self.settings.setValue('func_delimiter', self.func_delimiter.text())
 
     def closeEvent(self, event):
+        """Обработка закрытия окна: сохраняем настройки."""
+        log.info("Окно закрывается, сохраняем настройки")
         self.saveSettings()
         super().closeEvent(event)
 
     def open_find_replace_dialog(self):
+        """Открытие диалога поиска/замены."""
+        log.info("Открытие окна Find & Replace")
         self.find_replace_dialog = FindReplaceDialog(self)
         self.find_replace_dialog.show()
 
     def get_current_text_edit(self):
-        # Возвращаем последнее активное текстовое поле
+        """Возвращаем последнее активное текстовое поле."""
         return self.last_focused_text_edit
 
 
@@ -359,6 +467,7 @@ class FindReplaceDialog(QDialog):
     def __init__(self, parent=None):
         super(FindReplaceDialog, self).__init__(parent)
         self.parent = parent
+        log.debug("Инициализация FindReplaceDialog")
         self.initUI()
 
     def initUI(self):
@@ -412,11 +521,13 @@ class FindReplaceDialog(QDialog):
     def find_next(self):
         text_to_find = self.find_input.text()
         if not text_to_find:
+            log.debug("Find Next: пустая строка поиска")
             return
 
         # Получаем текущее текстовое поле из родительского окна
         text_edit = self.parent.get_current_text_edit()
         if not text_edit:
+            log.warning("Find Next без выбранного текстового поля")
             QMessageBox.warning(self, 'No Text Field Selected', 'Please select a text field to search.')
             return
 
@@ -434,16 +545,21 @@ class FindReplaceDialog(QDialog):
             text_edit.setTextCursor(cursor)
             found = text_edit.find(text_to_find, options)
             if not found:
+                log.info("Текст '%s' не найден при поиске", text_to_find)
                 QMessageBox.information(self, 'Not Found', 'Text not found.')
+        else:
+            log.debug("Найдено вхождение '%s'", text_to_find)
 
     def replace(self):
         text_to_find = self.find_input.text()
         replace_with = self.replace_input.text()
         if not text_to_find:
+            log.debug("Replace: пустая строка поиска")
             return
 
         text_edit = self.parent.get_current_text_edit()
         if not text_edit:
+            log.warning("Replace без выбранного текстового поля")
             QMessageBox.warning(self, 'No Text Field Selected', 'Please select a text field to replace.')
             return
 
@@ -451,6 +567,7 @@ class FindReplaceDialog(QDialog):
         if cursor.hasSelection() and cursor.selectedText() == text_to_find:
             cursor.insertText(replace_with)
             text_edit.setTextCursor(cursor)
+            log.debug("Replace: одно вхождение '%s' заменено на '%s'", text_to_find, replace_with)
             self.find_next()
         else:
             self.find_next()
@@ -459,10 +576,12 @@ class FindReplaceDialog(QDialog):
         text_to_find = self.find_input.text()
         replace_with = self.replace_input.text()
         if not text_to_find:
+            log.debug("Replace All: пустая строка поиска")
             return
 
         text_edit = self.parent.get_current_text_edit()
         if not text_edit:
+            log.warning("Replace All без выбранного текстового поля")
             QMessageBox.warning(self, 'No Text Field Selected', 'Please select a text field to replace.')
             return
 
@@ -485,11 +604,16 @@ class FindReplaceDialog(QDialog):
             replaced += 1
 
         cursor.endEditBlock()
+        log.info("Replace All: заменено %d вхождений '%s' на '%s'",
+                 replaced, text_to_find, replace_with)
         QMessageBox.information(self, 'Replace All', f'Replaced {replaced} occurrences.')
 
 
 if __name__ == '__main__':
+    log.info("Запуск QApplication")
     app = QApplication(sys.argv)
     window = TextRandomizerGUI()
     window.show()
-    sys.exit(app.exec_())
+    exit_code = app.exec_()
+    log.info("Приложение завершило работу с кодом %s", exit_code)
+    sys.exit(exit_code)
