@@ -1,50 +1,17 @@
 # Randomi
 
-Text randomizer.
-
-## Functions
-
-$RANDWORDS(min, max, word1, word2, ...)
-This function will accept minimum, maximum and a list of words from which to select a random number. 
-
-$MULTIPLY(word, count) 
-This function will repeat the word the required number of times. 
-
-Delimeter changes the "|" to the specified character.
-Function delimiter changes "," to the specified character.
-
-Try not to use service symbols.
-
-The Synonyms command - {variant1 | variant2 | variant3} - inserts one of the variants into the resulting string. If you want to skip the text, use the "empty" option - {|variant} Mixin command = [ text 1 | text 2 | text 3] - will randomly mix these options.
-
-You can use the separator in mixin - [+,+text 1|text2 ] - you will get text2,text1. The separator can be any character or set of characters: [+==+ a|b] - a==b or b==a If you want to get a special character in your result ({, }, [, ], |, +) - use a backslash for it - {, }, [, ], |, +
-
-All these commands can be mixed and nested in all combinations: 'start {aa|bb|{cc1|cc2}} or [a1|{word1|word2}|a3| [aa1|aa2|aa3]]' You can use special predefined randomization functions in templates - {random integer =$RANDINT(1.10), uuid = $UUID, now= $NOW(%Y-%M-%d)}. The result will be = 'random integer = 4, uuid = 8ae6bdf4-d321-40f6-8c3c-81d20b158acb, now = 2017-08-01' You can define your own randomization functions and use them in templates.
-
-## Other
-~~Automatic removal of extra spaces, commas and new lines. A double line makes a new line in the output.~~
-
-Font size, bold font, reset formatting.
-
-Resizing windows.
-
-Saving and loading. 
-
-Auto-save on exit.
-
-Search and replace in the text.
-
-# Randomi
-
 Рандомизатор текста.
 
 ## Функции
 
 $RANDWORDS(min, max, word1, word2, ...) 
 Эта функция будет принимать минимум, максимум и список слов, из которых нужно выбрать случайное количество. 
+Эти слова будут расставлены в случайном порядке.
 
 $MULTIPLY(word, count) 
 Эта функция будет повторять слово нужное количество раз. 
+Эта функция работает после того, как сработают функции внутри нее, поэтому дублироваться будет весь результат и без рандомизации.
+Например: $MULTIPLY($RANDWORDS(1, 2, a, b), 3) = b a b a b a. На данный момент можно использовать костыль: [+ +$MULTIPLY(a|,3)$MULTIPLY(b|,3)] = b  a a b  b   a (в результате будут лишние пробелы)
 
 Delimeter меняет "|" на указанный символ.
 Function delimeter меняет "," на указанный символ.
@@ -60,7 +27,7 @@ Function delimeter меняет "," на указанный символ.
 ## Прочее
 ~~Автоматическое удаление лишних пробелов, запятых и новых строк. Двойная строка делает новую строку в выводе.~~
 
-Размер шрифта, жирный шрифт, сброс форматирования.
+Размер шрифта(иногра не срабатывает без сброса форматирования), жирный шрифт, сброс форматирования.
 
 Изменения размеров окон.
 
