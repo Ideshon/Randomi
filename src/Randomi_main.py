@@ -72,12 +72,36 @@ class TextRandomizerGUI(QWidget):
 
     def changeFontSize(self, value):
         """Изменение размера шрифта во всех основных полях."""
-        log.info("Изменение размера шрифта: %s", value)
+        log.debug("Изменение размера шрифта: %s", value)
         font = self.entry.font()
         font.setPointSize(value)
         self.entry.setFont(font)
         self.result_output.setFont(font)
         self.template_label.setFont(font)
+
+        # применение размера шрифта ко всему тексту
+        fmt = QTextCharFormat()
+        fmt.setFontPointSize(value)
+
+        for editor in (self.entry, self.result_output, self.template_label):
+            cursor = editor.textCursor()
+            cursor.beginEditBlock()
+            cursor.select(QTextCursor.Document)  # выделяем весь документ
+            cursor.mergeCharFormat(fmt)  # меняем size, не трогая остальное форматирование
+            cursor.clearSelection()
+            editor.setTextCursor(cursor)
+            cursor.endEditBlock()
+
+        for editor in (self.entry, self.result_output, self.template_label):
+            cursor = editor.textCursor()
+            cursor.beginEditBlock()
+            cursor.select(QTextCursor.Document)  # выделяем весь документ
+            cursor.mergeCharFormat(fmt)  # меняем size, не трогая остальное форматирование
+            cursor.clearSelection()
+            editor.setTextCursor(cursor)
+            cursor.endEditBlock()
+            log.info("Размер шрифта изменен")
+
 
     def initUI(self):
         log.debug("Создание элементов UI")
@@ -412,12 +436,13 @@ class TextRandomizerGUI(QWidget):
                 self.template_label.setHtml(data.get('template_label', ''))
                 self.delimiter.setText(data.get('delimiter', ';'))
                 self.func_delimiter.setText(data.get('func_delimiter', ','))
+                self.changeFontSize(self.font_size_slider.value()) # применяем текущий размер шрифта ко всему загруженному тексту
             except Exception as e:
                 log.error("Ошибка при загрузке файла: %s", e, exc_info=True)
                 self.result_output.setHtml(f"<p>Error loading file: {str(e)}</p>")
 
     def loadSettings(self):
-        """Загрузка настроек из QSettings."""
+        # Загрузка настроек из QSettings.
         log.debug("Загрузка настроек из QSettings")
         entry_html = self.settings.value('entry', '')
         result_html = self.settings.value('result_output', '')
@@ -436,6 +461,8 @@ class TextRandomizerGUI(QWidget):
         if func_delimiter:
             self.func_delimiter.setText(func_delimiter)
         log.info("Настройки загружены")
+        self.changeFontSize(self.font_size_slider.value())
+        log.info("Размер шрифта применён")
 
     def saveSettings(self):
         """Сохранение настроек в QSettings."""
