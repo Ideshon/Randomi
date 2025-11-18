@@ -16,21 +16,62 @@ from text_randomizer import TextRandomizer
 # =========================
 # НАСТРОЙКА ЛОГИРОВАНИЯ
 # =========================
-# Лог-файлы будут лежать в папке "logs" рядом со скриптом.
-LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
 
-logging.basicConfig(
-    level=logging.DEBUG,  # при желании DEBUG заменить на INFO, чтобы убрать подробный шум
-    format='[%(asctime)s] %(levelname)s %(name)s: %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),  # вывод в консоль (работает, если собирать exe без --windowed)
-        logging.FileHandler(os.path.join(LOG_DIR, "randomi.log"), encoding="utf-8"),  # лог в файл
-    ]
-)
+def get_base_dir():
+    """
+    Базовая папка для логов и прочего:
+    - при запуске .py: рядом с файлом;
+    - при запуске .exe (PyInstaller): рядом с exe.
+    """
+    if getattr(sys, "frozen", False):
+        # "Замороженное" приложение (PyInstaller)
+        return os.path.dirname(sys.executable)
+    # Обычный скрипт
+    return os.path.dirname(os.path.abspath(__file__))
 
-log = logging.getLogger(__name__)
-log.info("Модуль Randomi загружен, логирование инициализировано")
+
+BASE_DIR = get_base_dir()
+LOG_DIR = os.path.join(BASE_DIR, "logs_Randomi")
+
+try:
+    os.makedirs(LOG_DIR, exist_ok=True)
+except Exception as e:
+    # Если даже папку создать не можем – логируем хоть в stdout
+    print("Не удалось создать папку логов:", LOG_DIR, e)
+
+LOG_PATH = os.path.join(LOG_DIR, "randomi.log")
+
+# Свой отдельный логгер, не зависящий от basicConfig
+log = logging.getLogger("randomi")
+log.setLevel(logging.DEBUG)
+log.propagate = False  # чтобы не дублировать сообщения выше
+
+# Чтобы при повторном запуске модуля не копились хендлеры
+if not log.handlers:
+    # Пишем в консоль (если она есть)
+    try:
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.DEBUG)
+        console_handler.setFormatter(logging.Formatter(
+            '[%(asctime)s] %(levelname)s %(name)s: %(message)s'
+        ))
+        log.addHandler(console_handler)
+    except Exception:
+        pass  # в windowed-режиме stdout может быть None – не страшно
+
+    # Пишем в файл рядом с exe / .py
+    try:
+        file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(
+            '[%(asctime)s] %(levelname)s %(name)s: %(message)s'
+        ))
+        log.addHandler(file_handler)
+    except Exception as e:
+        # Последний шанс что-то увидеть
+        print("Не удалось открыть лог-файл:", LOG_PATH, e)
+
+log.info("Логирование инициализировано, BASE_DIR=%s, LOG_PATH=%s", BASE_DIR, LOG_PATH)
 
 
 class TextRandomizerGUI(QWidget):
