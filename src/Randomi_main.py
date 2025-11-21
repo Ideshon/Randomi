@@ -4,6 +4,7 @@ import logging
 import re
 import random
 import json
+import html
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel, QLineEdit,
     QSplitter, QFileDialog, QSlider, QDialog, QMessageBox, QCheckBox
@@ -72,6 +73,20 @@ if not log.handlers:
         print("Не удалось открыть лог-файл:", LOG_PATH, e)
 
 log.info("Логирование инициализировано, BASE_DIR=%s, LOG_PATH=%s", BASE_DIR, LOG_PATH)
+
+class TemplateError(Exception):
+    """
+    Ошибка в шаблоне пользователя.
+    text  – строка, в которой нашли ошибку,
+    pos   – позиция (индекс символа),
+    inner – исходное исключение (TypeError, ValueError и т.п.).
+    """
+    def __init__(self, user_message, text, pos, inner=None):
+        super().__init__(user_message)
+        self.user_message = user_message
+        self.text = text
+        self.pos = pos
+        self.inner = inner
 
 
 class TextRandomizerGUI(QWidget):
@@ -260,77 +275,61 @@ class TextRandomizerGUI(QWidget):
         """Основной метод: парсинг HTML, подготовка шаблонов и запуск TextRandomizer."""
         log.info("Запуск рандомизации текста")
         try:
-            # Получаем HTML из поля ввода
             template = self.entry.toHtml()
             delimiter = self.delimiter.text()
             func_delimiter = self.func_delimiter.text()
             log.debug("Получен HTML из поля ввода, delimiter=%r, func_delimiter=%r", delimiter, func_delimiter)
 
-            # Разделяем HTML на теги и текстовые части
-            log.debug("Разделение HTML на теги и текстовые части")
             parts = re.split(r'(<[^>]+>)', template)
             new_parts = []
 
             for part in parts:
                 if part.startswith('<'):
-                    # Это тег, оставляем без изменений
                     new_parts.append(part)
                 else:
-                    # Это текстовая часть, обрабатываем её
-
-                    # Замена пользовательского разделителя на '|'
                     if delimiter and delimiter != '|':
                         escaped_delim = re.escape(delimiter)
                         part = re.sub(rf'\s*{escaped_delim}\s*', '|', part)
-                        log.debug("Замена пользовательского разделителя %r на '|'", delimiter)
 
-                    # Замена умножения слов на функцию $MULTIPLY(word, count)
                     part = re.sub(
                         r'(\w+)\*(\d+)',
                         lambda m: '{$' + f'MULTIPLY({m.group(1)},{m.group(2)})' + '}',
                         part
                     )
 
-                    # Замена %min-max(words) на функцию $RANDWORDS(min, max, words)
                     def replace_randwords(match):
                         min_count = match.group(1)
                         max_count = match.group(2)
                         words = match.group(3)
-                        log.debug("Обнаружен шаблон RANDWORDS: min=%s, max=%s, words=%s",
-                                  min_count, max_count, words)
                         return '{$RANDWORDS(' + f'{min_count}{func_delimiter}{max_count}{func_delimiter}{words}' + ')}'
 
                     part = re.sub(r'%(\d+)-(\d+)\((.*?)\)', replace_randwords, part)
 
-                    # Выполняем предварительную обработку функций
+                    # здесь могут всплывать TemplateError
                     part = self.evaluate_functions_in_text(part, func_delimiter)
 
                     new_parts.append(part)
 
-            # Собираем HTML-контент обратно
             randomized_html = ''.join(new_parts)
-            log.debug("HTML после предварительной обработки функций собран")
-
-            # Создание объекта TextRandomizer
             text_rnd = TextRandomizer(randomized_html)
-            log.debug("Создан TextRandomizer")
-
-            # Получаем рандомизированный текст с HTML
             final_html = text_rnd.get_text()
             log.info("Получен рандомизированный HTML")
-
-            # Устанавливаем результат в поле вывода
             self.result_output.setHtml(final_html)
-            log.info("Результат установлен в поле вывода")
+
+        except TemplateError as te:
+            # наш кастомный разбор ошибки с позицией
+            self.show_template_error(te)
 
         except Exception as e:
-            # Ловим любые ошибки и логируем стек
-            self.result_output.setHtml(f"<p>Error: {str(e)}</p>")
+            # прочие ошибки
+            self.result_output.setHtml(f"<p>Error: {html.escape(str(e))}</p>")
             log.error("Ошибка в randomize_text: %s", e, exc_info=True)
 
     def evaluate_functions_in_text(self, text, func_delimiter):
         """
-        Предварительная обработка для разворачивания вложенных функций типа $MULTIPLY(...) и $RANDWORDS(...).
+        Предварительная обработка для разворачивания вложенных функций
+        вида $MULTIPLY(...) и $RANDWORDS(...).
+        Если что-то сломалось – бросаем TemplateError с позицией.
         """
         log.debug("Старт evaluate_functions_in_text, func_delimiter=%r", func_delimiter)
 
@@ -342,15 +341,17 @@ class TextRandomizerGUI(QWidget):
                 func_name += s[i]
                 i += 1
             if i >= len(s) or s[i] != '(':
+                # это не функция, а просто '$' в тексте
                 return None, start
+
             i += 1  # Пропускаем '('
             log.debug("Найден вызов функции %r", func_name)
+
             args = []
             arg = ''
             depth = 1
             while i < len(s) and depth > 0:
-                # Проверяем на разделитель функций
-
+                # Проверяем на разделитель функций верхнего уровня
                 if depth == 1 and s[i:i + len(func_delimiter)] == func_delimiter:
                     args.append(arg)
                     arg = ''
@@ -374,9 +375,10 @@ class TextRandomizerGUI(QWidget):
                     i += 1
             else:
                 if depth > 0:
-                    log.error("Несовпадающая скобка при вызове функции %r", func_name)
-                    raise ValueError("Unmatched parenthesis in function call")
-
+                    # Несовпадающая скобка – сразу TemplateError
+                    msg = f"Несовпадающая скобка в вызове функции {func_name}"
+                    log.error(msg)
+                    raise TemplateError(msg, s, start - 1)
             return {'name': func_name, 'args': args}, i
 
         def evaluate(s):
@@ -386,28 +388,39 @@ class TextRandomizerGUI(QWidget):
             i = 0
             while i < len(s):
                 if s[i] == '$':
-
                     func_info, new_i = parse_function(s, i + 1)
                     if func_info:
-                        log.debug("Найдена функция %s с аргументами %r",
-                                  func_info['name'], func_info['args'])
-                        evaluated_args = [evaluate(arg) for arg in func_info['args']]
-                        if func_info['name'] == 'MULTIPLY':
-                            res = self.multiply(*evaluated_args)
-                            log.debug("Результат MULTIPLY: %r", res)
-                        elif func_info['name'] == 'RANDWORDS':
-                            res = self.randwords(*evaluated_args)
-                            log.debug("Результат RANDWORDS: %r", res)
-                        else:
-                            res = ''
-                            log.warning("Неизвестная функция: %s", func_info['name'])
+                        try:
+                            # сначала рекурсивно прогоняем аргументы
+                            evaluated_args = [evaluate(arg) for arg in func_info['args']]
+
+                            # затем вызываем соответствующую функцию
+                            if func_info['name'] == 'MULTIPLY':
+                                res = self.multiply(*evaluated_args)
+                            elif func_info['name'] == 'RANDWORDS':
+                                res = self.randwords(*evaluated_args)
+                            else:
+                                # неизвестная функция
+                                msg = f"Неизвестная функция {func_info['name']}"
+                                raise TemplateError(msg, s, i)
+
+                        except TemplateError:
+                            # уже упакованный TemplateError – просто пробрасываем дальше
+                            raise
+                        except Exception as e:
+                            # тут как раз случаи вроде:
+                            # TextRandomizerGUI.multiply() missing 1 required positional argument: 'count'
+                            msg = f"Ошибка в функции {func_info['name']}: {e}"
+                            log.error(msg)
+                            raise TemplateError("отсутствует необходимый элемент в функции", s, i, inner=e)
+
                         result += res
                         i = new_i
                         continue
                     else:
+                        # это просто символ '$', не функция
                         result += s[i]
                         i += 1
-
                 else:
                     result += s[i]
                     i += 1
@@ -529,6 +542,61 @@ class TextRandomizerGUI(QWidget):
     def get_current_text_edit(self):
         """Возвращаем последнее активное текстовое поле."""
         return self.last_focused_text_edit
+
+    def show_template_error(self, te: TemplateError):
+        """
+        Красивый вывод ошибки шаблона:
+        - человекочитаемое сообщение,
+        - строка и столбец,
+        - кусок текста вокруг ошибки.
+        """
+        text = te.text or ""
+        pos = max(0, min(te.pos, len(text)))  # защита от выхода за границы
+
+        # считаем строку и столбец
+        line = text.count('\n', 0, pos) + 1
+        last_nl = text.rfind('\n', 0, pos)
+        if last_nl == -1:
+            col = pos + 1
+        else:
+            col = pos - last_nl
+
+        # кусок текста вокруг ошибки
+        snippet_start = max(0, pos - 40)
+        snippet_end = min(len(text), pos + 40)
+        snippet = text[snippet_start:snippet_end]
+
+        # выделим место ошибки в сниппете визуально
+        marker_in_snippet = pos - snippet_start
+        before = snippet[:marker_in_snippet]
+        error_char = snippet[marker_in_snippet:marker_in_snippet + 1]
+        after = snippet[marker_in_snippet + 1:]
+
+        snippet_html = (
+            f"{html.escape(before)}"
+            f"<span style='background-color:#ffcccc;color:#000;'>"
+            f"{html.escape(error_char) if error_char else '⟂'}"
+            f"</span>"
+            f"{html.escape(after)}"
+        )
+
+        user_msg = te.user_message or "Ошибка в шаблоне"
+
+        html_msg = (
+            "<p><b>Ошибка в шаблоне:</b> "
+            f"{html.escape(user_msg)}</p>"
+            f"<p>Строка {line}, символ {col}</p>"
+            f"<p><code>{snippet_html}</code></p>"
+        )
+
+        self.result_output.setHtml(html_msg)
+
+        log.error(
+            "TemplateError: %s (line %d, col %d, context=%r)",
+            user_msg, line, col, snippet,
+            exc_info=te.inner or True
+        )
+
 
 
 class FindReplaceDialog(QDialog):
