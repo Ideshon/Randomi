@@ -77,16 +77,21 @@ log.info("Логирование инициализировано, BASE_DIR=%s, 
 class TemplateError(Exception):
     """
     Ошибка в шаблоне пользователя.
-    text  – строка, в которой нашли ошибку,
-    pos   – позиция (индекс символа),
-    inner – исходное исключение (TypeError, ValueError и т.п.).
+
+    local_text  – кусок текста, в котором нашли ошибку (как сейчас)
+    local_pos   – позиция символа внутри этого куска
+    full_text   – весь текст пользователя
+    full_pos    – позиция символа во всём тексте
     """
-    def __init__(self, user_message, text, pos, inner=None):
+    def __init__(self, user_message, local_text, local_pos,
+                 inner=None, full_text=None, full_pos=None):
         super().__init__(user_message)
         self.user_message = user_message
-        self.text = text
-        self.pos = pos
+        self.text = local_text
+        self.pos = local_pos
         self.inner = inner
+        self.full_text = full_text
+        self.full_pos = full_pos
 
 
 class TextRandomizerGUI(QWidget):
@@ -275,18 +280,38 @@ class TextRandomizerGUI(QWidget):
         """Основной метод: парсинг HTML, подготовка шаблонов и запуск TextRandomizer."""
         log.info("Запуск рандомизации текста")
         try:
+            # Полный текст пользователя (для глобальных строк/символов)
+            full_text = self.entry.toPlainText()
+            self._full_text = full_text  # на всякий случай сохраним в объекте
+
             template = self.entry.toHtml()
             delimiter = self.delimiter.text()
             func_delimiter = self.func_delimiter.text()
-            log.debug("Получен HTML из поля ввода, delimiter=%r, func_delimiter=%r", delimiter, func_delimiter)
+            log.debug("Получен HTML из поля ввода, delimiter=%r, func_delimiter=%r",
+                      delimiter, func_delimiter)
 
             parts = re.split(r'(<[^>]+>)', template)
             new_parts = []
+
+            # будем искать каждый текстовый кусок в full_text, двигаясь вперёд
+            search_from = 0
 
             for part in parts:
                 if part.startswith('<'):
                     new_parts.append(part)
                 else:
+                    original_part = part  # оригинальный текст без наших преобразований
+
+                    # Пытаемся найти этот кусок в полном тексте, чтобы знать глобальное смещение
+                    base_offset = None
+                    if full_text:
+                        idx = full_text.find(original_part, search_from)
+                        if idx != -1:
+                            base_offset = idx
+                            search_from = idx + len(original_part)
+                        # если не нашли, НИЧЕГО не придумываем — base_offset остаётся None
+
+                    # дальше твоя существующая обработка:
                     if delimiter and delimiter != '|':
                         escaped_delim = re.escape(delimiter)
                         part = re.sub(rf'\s*{escaped_delim}\s*', '|', part)
@@ -305,8 +330,9 @@ class TextRandomizerGUI(QWidget):
 
                     part = re.sub(r'%(\d+)-(\d+)\((.*?)\)', replace_randwords, part)
 
-                    # здесь могут всплывать TemplateError
-                    part = self.evaluate_functions_in_text(part, func_delimiter)
+                    # ВАЖНО: передаём base_offset внутрь evaluate_functions_in_text
+                    part = self.evaluate_functions_in_text(part, func_delimiter,
+                                                           base_offset=base_offset)
 
                     new_parts.append(part)
 
@@ -325,33 +351,51 @@ class TextRandomizerGUI(QWidget):
             self.result_output.setHtml(f"<p>Error: {html.escape(str(e))}</p>")
             log.error("Ошибка в randomize_text: %s", e, exc_info=True)
 
-    def evaluate_functions_in_text(self, text, func_delimiter):
+    def evaluate_functions_in_text(self, text, func_delimiter, base_offset=0):
         """
-        Предварительная обработка для разворачивания вложенных функций
-        вида $MULTIPLY(...) и $RANDWORDS(...).
-        Если что-то сломалось – бросаем TemplateError с позицией.
+        Разворачивает функции $MULTIPLY и $RANDWORDS в строке `text`.
+        base_offset — индекс начала этого текста во всём шаблоне.
+        При ошибках кидает TemplateError с глобальными координатами.
         """
-        log.debug("Старт evaluate_functions_in_text, func_delimiter=%r", func_delimiter)
+        log.debug("Старт evaluate_functions_in_text, func_delimiter=%r, base_offset=%s",
+                  func_delimiter, base_offset)
+
+        full_text = getattr(self, "_full_text", None)  # полный текст из randomize_text
+
+        def make_error(msg, local_pos, inner=None):
+            """Упаковываем всё в TemplateError с глобальной позицией."""
+            if full_text is not None and base_offset is not None:
+                full_pos = base_offset + local_pos
+                ft = full_text
+            else:
+                # глобальную позицию вычислить не удалось — будем работать только с локальным куском
+                full_pos = None
+                ft = None
+
+            raise TemplateError(
+                msg,
+                text,  # локальный кусок
+                local_pos,  # позиция внутри локального куска
+                inner=inner,
+                full_text=ft,  # либо весь текст, либо None
+                full_pos=full_pos,
+            )
 
         def parse_function(s, start):
-            """Парсим имя функции и её аргументы, учитывая вложенные скобки."""
             func_name = ''
             i = start
             while i < len(s) and (s[i].isalnum() or s[i] == '_'):
                 func_name += s[i]
                 i += 1
             if i >= len(s) or s[i] != '(':
-                # это не функция, а просто '$' в тексте
                 return None, start
 
-            i += 1  # Пропускаем '('
+            i += 1  # пропускаем '('
             log.debug("Найден вызов функции %r", func_name)
-
             args = []
             arg = ''
             depth = 1
             while i < len(s) and depth > 0:
-                # Проверяем на разделитель функций верхнего уровня
                 if depth == 1 and s[i:i + len(func_delimiter)] == func_delimiter:
                     args.append(arg)
                     arg = ''
@@ -364,8 +408,8 @@ class TextRandomizerGUI(QWidget):
                     depth -= 1
                     if depth == 0:
                         args.append(arg)
-                        i += 1  # Пропускаем ')'
-                        log.debug("Закрывающая скобка функции %r, аргументы=%r", func_name, args)
+                        i += 1
+                        log.debug("Закрыта функция %r, аргументы=%r", func_name, args)
                         break
                     else:
                         arg += s[i]
@@ -375,14 +419,11 @@ class TextRandomizerGUI(QWidget):
                     i += 1
             else:
                 if depth > 0:
-                    # Несовпадающая скобка – сразу TemplateError
-                    msg = f"Несовпадающая скобка в вызове функции {func_name}"
-                    log.error(msg)
-                    raise TemplateError(msg, s, start - 1)
+                    make_error(f"Несовпадающая скобка в вызове функции {func_name}",
+                               start - 1)
             return {'name': func_name, 'args': args}, i
 
         def evaluate(s):
-            """Рекурсивная подстановка результатов функций в строку."""
             log.debug("Запуск evaluate для строки длиной %d", len(s))
             result = ''
             i = 0
@@ -391,40 +432,46 @@ class TextRandomizerGUI(QWidget):
                     func_info, new_i = parse_function(s, i + 1)
                     if func_info:
                         try:
-                            # сначала рекурсивно прогоняем аргументы
-                            evaluated_args = [evaluate(arg) for arg in func_info['args']]
+                            # рекурсивно разворачиваем аргументы,
+                            # но ошибки изнутри перевешиваем на текущую функцию
+                            try:
+                                evaluated_args = [evaluate(arg) for arg in func_info['args']]
+                            except TemplateError as inner_te:
+                                # ошибка внутри аргумента — считаем ошибкой в этом вызове
+                                make_error(inner_te.user_message, i, inner=inner_te)
 
-                            # затем вызываем соответствующую функцию
                             if func_info['name'] == 'MULTIPLY':
                                 res = self.multiply(*evaluated_args)
                             elif func_info['name'] == 'RANDWORDS':
                                 res = self.randwords(*evaluated_args)
                             else:
-                                # неизвестная функция
-                                msg = f"Неизвестная функция {func_info['name']}"
-                                raise TemplateError(msg, s, i)
+                                make_error(f"Неизвестная функция {func_info['name']}", i)
 
-                        except TemplateError:
-                            # уже упакованный TemplateError – просто пробрасываем дальше
-                            raise
-                        except Exception as e:
-                            # тут как раз случаи вроде:
-                            # TextRandomizerGUI.multiply() missing 1 required positional argument: 'count'
-                            msg = f"Ошибка в функции {func_info['name']}: {e}"
-                            log.error(msg)
-                            raise TemplateError("отсутствует необходимый элемент в функции", s, i, inner=e)
+
+                        except TypeError as e:
+                            # не хватает аргументов: MULTIPLY(x) без count и т.п.
+                            log.error("TypeError при вызове функции %s: %s",
+                                      func_info['name'], e)
+                            make_error("отсутствует необходимый элемент в функции",
+                                       i, inner=e)
+
+                        except ValueError as e:
+                            # аргументы есть, но кривые (пустая строка вместо числа и т.п.)
+                            log.error("ValueError при вызове функции %s: %s",
+                                      func_info['name'], e)
+                            make_error("некорректное значение параметра в функции",
+                                       i, inner=e)
 
                         result += res
                         i = new_i
                         continue
                     else:
-                        # это просто символ '$', не функция
+                        # просто символ '$'
                         result += s[i]
                         i += 1
                 else:
                     result += s[i]
                     i += 1
-            log.debug("Завершение evaluate, результат длиной %d", len(result))
             return result
 
         processed = evaluate(text)
@@ -432,14 +479,16 @@ class TextRandomizerGUI(QWidget):
         return processed
 
     def multiply(self, word, count):
-        """Реализация функции MULTIPLY(word, count)."""
         log.debug("Сработала функция MULTIPLY: word=%r, count=%r", word, count)
+        if str(count).strip() == "":
+            raise ValueError("параметр count пустой")
         return ' '.join([word] * int(count))
 
     def randwords(self, min_count, max_count, *words):
-        """Реализация функции RANDWORDS(min, max, words...)."""
         log.debug("Сработала функция RANDWORDS: min=%r, max=%r, words=%r",
                   min_count, max_count, words)
+        if str(min_count).strip() == "" or str(max_count).strip() == "":
+            raise ValueError("минимум/максимум пустые")
         min_count = int(min_count)
         max_count = int(max_count)
         words = [w.strip() for w in words]
@@ -546,57 +595,78 @@ class TextRandomizerGUI(QWidget):
     def show_template_error(self, te: TemplateError):
         """
         Красивый вывод ошибки шаблона:
-        - человекочитаемое сообщение,
-        - строка и столбец,
-        - кусок текста вокруг ошибки.
+        – сообщение,
+        – строка и столбец,
+        – кусок текста вокруг ошибки.
         """
-        text = te.text or ""
-        pos = max(0, min(te.pos, len(text)))  # защита от выхода за границы
+        import html as _html
 
-        # считаем строку и столбец
-        line = text.count('\n', 0, pos) + 1
-        last_nl = text.rfind('\n', 0, pos)
-        if last_nl == -1:
-            col = pos + 1
+        # 1) ЛОКАЛЬНЫЙ текст и позиция (то, с чем работал парсер)
+        local_text = te.text or ""
+        local_pos = te.pos or 0
+        local_pos = max(0, min(local_pos, len(local_text)))
+
+        # Локальный сниппет вокруг ошибки
+        loc_snippet_start = max(0, local_pos - 40)
+        loc_snippet_end = min(len(local_text), local_pos + 40)
+        loc_snippet = local_text[loc_snippet_start:loc_snippet_end]
+
+        loc_marker = local_pos - loc_snippet_start
+        loc_before = loc_snippet[:loc_marker]
+        loc_error_char = loc_snippet[loc_marker:loc_marker + 1]
+        loc_after = loc_snippet[loc_marker + 1:]
+
+        # По локальному тексту пока считаем строку/символ
+        loc_line = local_text.count('\n', 0, local_pos) + 1
+        loc_last_nl = local_text.rfind('\n', 0, local_pos)
+        if loc_last_nl == -1:
+            loc_col = local_pos + 1
         else:
-            col = pos - last_nl
+            loc_col = local_pos - loc_last_nl
 
-        # кусок текста вокруг ошибки
-        snippet_start = max(0, pos - 40)
-        snippet_end = min(len(text), pos + 40)
-        snippet = text[snippet_start:snippet_end]
+        # 2) ПЫТАЕМСЯ пересчитать координаты по всему тексту из QTextEdit
+        full_text = self.entry.toPlainText()
+        global_line = loc_line
+        global_col = loc_col
+        snippet_for_search = loc_snippet
 
-        # выделим место ошибки в сниппете визуально
-        marker_in_snippet = pos - snippet_start
-        before = snippet[:marker_in_snippet]
-        error_char = snippet[marker_in_snippet:marker_in_snippet + 1]
-        after = snippet[marker_in_snippet + 1:]
+        if full_text and snippet_for_search.strip():
+            idx = full_text.find(snippet_for_search)
+            if idx != -1:
+                global_pos = idx + loc_marker
+                global_pos = max(0, min(global_pos, len(full_text)))
 
+                global_line = full_text.count('\n', 0, global_pos) + 1
+                g_last_nl = full_text.rfind('\n', 0, global_pos)
+                if g_last_nl == -1:
+                    global_col = global_pos + 1
+                else:
+                    global_col = global_pos - g_last_nl
+
+        # 3) Используем локальный сниппет для отображения (он уже нормальный)
         snippet_html = (
-            f"{html.escape(before)}"
+            f"{_html.escape(loc_before)}"
             f"<span style='background-color:#ffcccc;color:#000;'>"
-            f"{html.escape(error_char) if error_char else '⟂'}"
+            f"{_html.escape(loc_error_char) if loc_error_char else '⟂'}"
             f"</span>"
-            f"{html.escape(after)}"
+            f"{_html.escape(loc_after)}"
         )
 
         user_msg = te.user_message or "Ошибка в шаблоне"
 
         html_msg = (
-            "<p><b>Ошибка в шаблоне:</b> "
-            f"{html.escape(user_msg)}</p>"
-            f"<p>Строка {line}, символ {col}</p>"
+            f"<p><b>Ошибка в шаблоне:</b> {_html.escape(user_msg)}</p>"
+            f"<p>Строка {global_line}, символ {global_col}</p>"
             f"<p><code>{snippet_html}</code></p>"
         )
 
         self.result_output.setHtml(html_msg)
 
         log.error(
-            "TemplateError: %s (line %d, col %d, context=%r)",
-            user_msg, line, col, snippet,
+            "TemplateError: %s (global line %d, col %d, loc line %d, col %d, context=%r)",
+            user_msg, global_line, global_col, loc_line, loc_col, loc_snippet,
             exc_info=te.inner or True
         )
-
 
 
 class FindReplaceDialog(QDialog):
